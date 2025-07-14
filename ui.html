@@ -196,7 +196,7 @@
       </div>
       
       <div class="form-group">
-        <label for="keywords">Keywords (comma-separated)</label>
+        <label for="keywords">Keywords (comma-separated, optional)</label>
         <textarea id="keywords" placeholder="Enter relevant keywords for your blog post..."></textarea>
       </div>
       
@@ -232,12 +232,7 @@
           showError('Please enter a blog title');
           return;
         }
-        
-        if (!keywords) {
-          showError('Please enter some keywords');
-          return;
-        }
-        
+        // Remove the check for keywords being required
         // Show loading state
         document.getElementById('loading').style.display = 'block';
         document.getElementById('result').style.display = 'none';
@@ -250,7 +245,7 @@
               type: 'generate-template',
               apiKey,
               blogTitle,
-              keywords
+              keywords // can be empty
             } 
           }, '*');
         } catch (error) {
@@ -332,9 +327,33 @@
       function showDownloadButton(webpBlob) {
         const url = URL.createObjectURL(webpBlob);
         const downloadLink = document.getElementById('downloadLink');
-        downloadLink.href = url;
-        downloadLink.download = 'blog-template.webp';
-        downloadLink.style.display = 'inline-block';
+        // Get the blog title and dimensions from the result details
+        const detailsDiv = document.getElementById('templateDetails');
+        let title = '';
+        let width = 0;
+        let height = 0;
+        // Try to extract title and dimensions from the detailsDiv
+        const titleMatch = detailsDiv.innerHTML.match(/<strong>Blog Title:<\/strong> ([^<]+)/);
+        if (titleMatch) {
+          title = titleMatch[1];
+        }
+        // Get the image element to read dimensions
+        const tempImg = new Image();
+        tempImg.onload = () => {
+          width = tempImg.width;
+          height = tempImg.height;
+          // Slugify the title
+          const slug = title
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .replace(/--+/g, '-');
+          const filename = `${slug || 'blog-template'}-${width}x${height}.webp`;
+          downloadLink.href = url;
+          downloadLink.download = filename;
+          downloadLink.style.display = 'inline-block';
+        };
+        tempImg.src = url;
       }
     </script>
   </body>
