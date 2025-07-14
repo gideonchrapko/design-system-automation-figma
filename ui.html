@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        padding: 20px;
+        background: #f8f9fa;
+        color: #333;
+      }
+      
+      .container {
+        max-width: 500px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      }
+      
+      h1 {
+        font-size: 24px;
+        font-weight: 600;
+        margin-bottom: 8px;
+        color: #1a1a1a;
+      }
+      
+      .subtitle {
+        color: #666;
+        margin-bottom: 24px;
+        font-size: 14px;
+      }
+      
+      .form-group {
+        margin-bottom: 20px;
+      }
+      
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 500;
+        color: #333;
+      }
+      
+      input, textarea {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #e1e5e9;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: border-color 0.2s;
+      }
+      
+      input:focus, textarea:focus {
+        outline: none;
+        border-color: #007AFF;
+      }
+      
+      textarea {
+        resize: vertical;
+        min-height: 80px;
+      }
+      
+      .api-key-section {
+        background: #f8f9fa;
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        border: 1px solid #e1e5e9;
+      }
+      
+      .api-key-section label {
+        font-size: 12px;
+        color: #666;
+        margin-bottom: 4px;
+      }
+      
+      .api-key-section input {
+        font-size: 12px;
+        padding: 8px;
+      }
+      
+      button {
+        width: 100%;
+        padding: 14px;
+        background: #007AFF;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background-color 0.2s;
+      }
+      
+      button:hover {
+        background: #0056CC;
+      }
+      
+      button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+      }
+      
+      .loading {
+        display: none;
+        text-align: center;
+        padding: 20px;
+      }
+      
+      .spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #007AFF;
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 10px;
+      }
+      
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      
+      .result {
+        display: none;
+        margin-top: 20px;
+        padding: 16px;
+        background: #f0f8ff;
+        border-radius: 8px;
+        border: 1px solid #007AFF;
+      }
+      
+      .result h3 {
+        margin-bottom: 12px;
+        color: #007AFF;
+      }
+      
+      .component-list {
+        margin-top: 12px;
+      }
+      
+      .component-item {
+        background: white;
+        padding: 8px 12px;
+        margin-bottom: 8px;
+        border-radius: 6px;
+        border: 1px solid #e1e5e9;
+      }
+      
+      .download-link {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 8px 16px;
+        background: #28a745;
+        color: white;
+        text-decoration: none;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+      
+      .download-link:hover {
+        background: #218838;
+      }
+      
+      .error {
+        color: #dc3545;
+        background: #f8d7da;
+        padding: 12px;
+        border-radius: 6px;
+        margin-top: 12px;
+        border: 1px solid #f5c6cb;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>AI Blog Template Generator</h1>
+      <p class="subtitle">Generate custom blog templates using AI-powered component selection</p>
+      
+      <div class="api-key-section">
+        <label for="apiKey">OpenAI API Key (required)</label>
+        <input type="password" id="apiKey" placeholder="sk-..." />
+      </div>
+      
+      <div class="form-group">
+        <label for="blogTitle">Blog Title</label>
+        <input type="text" id="blogTitle" placeholder="Enter your blog post title..." />
+      </div>
+      
+      <div class="form-group">
+        <label for="keywords">Keywords (comma-separated)</label>
+        <textarea id="keywords" placeholder="Enter relevant keywords for your blog post..."></textarea>
+      </div>
+      
+      <button id="generate">Generate Template</button>
+      
+      <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <p>Analyzing components and generating template...</p>
+      </div>
+      
+      <div class="result" id="result">
+        <h3>Generated Template</h3>
+        <div id="templateDetails"></div>
+        <div class="component-list" id="componentList"></div>
+        <a href="#" class="download-link" id="downloadLink" style="display:none;">Download Template (WebP)</a>
+      </div>
+      
+      <div class="error" id="error" style="display: none;"></div>
+    </div>
+
+    <script>
+      document.getElementById('generate').onclick = async () => {
+        const apiKey = document.getElementById('apiKey').value.trim();
+        const blogTitle = document.getElementById('blogTitle').value.trim();
+        const keywords = document.getElementById('keywords').value.trim();
+        
+        if (!apiKey) {
+          showError('Please enter your OpenAI API key');
+          return;
+        }
+        
+        if (!blogTitle) {
+          showError('Please enter a blog title');
+          return;
+        }
+        
+        if (!keywords) {
+          showError('Please enter some keywords');
+          return;
+        }
+        
+        // Show loading state
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('result').style.display = 'none';
+        document.getElementById('error').style.display = 'none';
+        document.getElementById('generate').disabled = true;
+        
+        try {
+          parent.postMessage({ 
+            pluginMessage: { 
+              type: 'generate-template',
+              apiKey,
+              blogTitle,
+              keywords
+            } 
+          }, '*');
+        } catch (error) {
+          showError('Failed to start generation: ' + error.message);
+          hideLoading();
+        }
+      };
+      
+      function showError(message) {
+        const errorDiv = document.getElementById('error');
+        errorDiv.textContent = message;
+        errorDiv.style.display = 'block';
+        hideLoading();
+      }
+      
+      function hideLoading() {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('generate').disabled = false;
+      }
+      
+      function showResult(details) {
+        const resultDiv = document.getElementById('result');
+        const detailsDiv = document.getElementById('templateDetails');
+        const componentListDiv = document.getElementById('componentList');
+        const downloadLink = document.getElementById('downloadLink');
+
+        detailsDiv.innerHTML = `
+          <p><strong>Blog Title:</strong> ${details.blogTitle}</p>
+          <p><strong>Selected Background:</strong> ${details.background}</p>
+          <p><strong>Main Image:</strong> ${details.mainImage}</p>
+          <p><strong>Supporting Images:</strong> ${details.supportingImages.length}</p>
+        `;
+
+        componentListDiv.innerHTML = '';
+        details.supportingImages.forEach((img, index) => {
+          const item = document.createElement('div');
+          item.className = 'component-item';
+          item.textContent = `${index + 1}. ${img}`;
+          componentListDiv.appendChild(item);
+        });
+
+        // Hide download link until image is ready
+        downloadLink.style.display = 'none';
+        resultDiv.style.display = 'block';
+        hideLoading();
+      }
+      
+      // Listen for exported image from plugin code
+      onmessage = (event) => {
+        const msg = event.data.pluginMessage;
+        if (msg.type === 'exported-image') {
+          // Show result details (no download yet)
+          showResult(msg);
+          // Convert PNG bytes to WebP and show download button
+          const pngBytes = new Uint8Array(msg.bytes);
+          const pngBlob = new Blob([pngBytes], { type: 'image/png' });
+          convertAndShowDownload(pngBlob);
+        } else if (msg.type === 'error') {
+          showError(msg.message);
+        }
+      };
+
+      async function convertAndShowDownload(pngBlob) {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          // Compress to WebP (quality 0.8)
+          canvas.toBlob((webpBlob) => {
+            showDownloadButton(webpBlob);
+          }, 'image/webp', 0.8);
+        };
+        img.src = URL.createObjectURL(pngBlob);
+      }
+
+      function showDownloadButton(webpBlob) {
+        const url = URL.createObjectURL(webpBlob);
+        const downloadLink = document.getElementById('downloadLink');
+        downloadLink.href = url;
+        downloadLink.download = 'blog-template.webp';
+        downloadLink.style.display = 'inline-block';
+      }
+    </script>
+  </body>
+</html>
