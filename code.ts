@@ -10,9 +10,9 @@ const AI_RULES = {
   // Background layout rules
   backgroundRules: {
     'bg-one': { 
-      maxSupporting: 1, 
-      positions: ['top-left'],
-      description: 'Simple layout with 1 supporting image at top-left'
+      maxSupporting: 2, 
+      positions: ['top-left', 'custom-bg-one-2'],
+      description: 'Simple layout with 2 supporting images: one at top-left, one at (250,750) sized 250x250'
     },
     'bg-two': { 
       maxSupporting: 1, 
@@ -483,6 +483,9 @@ async function createTemplate(selection: TemplateSelection, components: Componen
       
       // Randomly select supporting graphics for each position
       for (let index = 0; index < positions.length; index++) {
+        if (!positions || typeof positions[index] === 'undefined') {
+          continue;
+        }
         if (allSupportingGraphics.length > 0) {
           // Randomly select a supporting graphic
           const randomIndex = Math.floor(Math.random() * allSupportingGraphics.length);
@@ -490,25 +493,23 @@ async function createTemplate(selection: TemplateSelection, components: Componen
           
           const supportInstance = selectedSupporting.node.createInstance();
           if (selectedSupporting.name.startsWith('supporting-graphic')) {
-            // Check if this is bg-four and use smaller size
-            console.log(`=== SUPPORTING GRAPHIC DEBUG ===`);
-            console.log(`Background type: ${bgType}`);
-            console.log(`Supporting graphic: ${selectedSupporting.name}`);
-            console.log(`Is bg-four? ${bgType === 'bg-four'}`);
-            
+            // Check if this is bg-four and use smaller size, or bg-one's second supporting graphic
             if (bgType === 'bg-four') {
               supportInstance.resize(375, 375); // Smaller size for bg-four
-              console.log(`✅ Resized to 375x375 for bg-four`);
+            } else if (
+              bgType === 'bg-one' &&
+              positions[index]?.customSize?.width !== undefined &&
+              positions[index]?.customSize?.height !== undefined
+            ) {
+              supportInstance.resize(positions[index]?.customSize?.width ?? 250, positions[index]?.customSize?.height ?? 250);
             } else {
               supportInstance.resize(AI_RULES.componentSizes.supportingGraphic.width, AI_RULES.componentSizes.supportingGraphic.height);
-              console.log(`📏 Resized to default size: ${AI_RULES.componentSizes.supportingGraphic.width}x${AI_RULES.componentSizes.supportingGraphic.height}`);
             }
-            console.log(`=== END SUPPORTING GRAPHIC DEBUG ===`);
           } else {
             supportInstance.resize(150, 150); // default
           }
-          supportInstance.x = positions[index].x;
-          supportInstance.y = positions[index].y;
+          supportInstance.x = positions[index]?.x ?? 0;
+          supportInstance.y = positions[index]?.y ?? 0;
           frame.appendChild(supportInstance);
           
           // Remove the selected graphic from the pool to avoid duplicates (optional)
@@ -593,16 +594,16 @@ async function createTemplate(selection: TemplateSelection, components: Componen
 }
 
 // Get positioning for supporting images based on background type
-function getPositionsForBackground(bgType: string): { x: number, y: number }[] {
+function getPositionsForBackground(bgType: string): { x: number, y: number, customSize?: {width:number, height:number} }[] {
   const rule = AI_RULES.backgroundRules[bgType as keyof typeof AI_RULES.backgroundRules];
   
   if (!rule) {
     return [{ x: 50, y: 600 }]; // default to bottom-left
   }
   
-  const positions: { x: number, y: number }[] = [];
+  const positions: { x: number, y: number, customSize?: {width:number, height:number} }[] = [];
   
-  rule.positions.forEach(position => {
+  rule.positions.forEach((position, idx) => {
     switch (position) {
       case 'bottom-left':
         positions.push({ x: 50, y: 600 });
@@ -624,6 +625,9 @@ function getPositionsForBackground(bgType: string): { x: number, y: number }[] {
         break;
       case 'bottom-mid-left':
         positions.push({ x: 0, y: 500 });
+        break;
+      case 'custom-bg-one-2':
+        positions.push({ x: 250, y: 750, customSize: { width: 250, height: 250 } });
         break;
       default:
         positions.push({ x: 50, y: 600 });
@@ -696,6 +700,21 @@ figma.ui.onmessage = async (msg: any) => {
       }
       // Select components using AI
       const selection = await selectComponentsWithAI(apiKey, blogTitle, keywords, components);
+
+      // --- RANDOMIZE main-illustration color variant if multiple exist ---
+      if (selection.mainImage.startsWith('main-illustration')) {
+        // Extract base name (e.g., main-illustration-foo)
+        const base = selection.mainImage.split('-').slice(0, 3).join('-');
+        // Find all main images with the same base
+        const mainVariants = components.filter(c => c.type === 'main' && c.name.startsWith(base));
+        if (mainVariants.length > 1) {
+          // Randomly select one
+          const randomIdx = Math.floor(Math.random() * mainVariants.length);
+          selection.mainImage = mainVariants[randomIdx].name;
+        }
+      }
+      // --- END RANDOMIZE ---
+
       // Create the template and export as PNG
       const pngBytes = await createTemplate(selection, components);
       // Send PNG bytes to UI for further processing
