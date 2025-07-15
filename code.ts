@@ -701,16 +701,30 @@ figma.ui.onmessage = async (msg: any) => {
       // Select components using AI
       const selection = await selectComponentsWithAI(apiKey, blogTitle, keywords, components);
 
-      // --- RANDOMIZE main-illustration color variant if multiple exist ---
+      // --- RANDOMIZE main-illustration color AND base variant if multiple exist ---
       if (selection.mainImage.startsWith('main-illustration')) {
-        // Extract base name (e.g., main-illustration-foo)
-        const base = selection.mainImage.split('-').slice(0, 3).join('-');
-        // Find all main images with the same base
-        const mainVariants = components.filter(c => c.type === 'main' && c.name.startsWith(base));
-        if (mainVariants.length > 1) {
-          // Randomly select one
-          const randomIdx = Math.floor(Math.random() * mainVariants.length);
-          selection.mainImage = mainVariants[randomIdx].name;
+        // Find all main-illustration components that are allowed with the selected background
+        const allowedBackgrounds = AI_RULES.mainImageRules['main-illustration'];
+        const eligibleMainIllustrations = components.filter(c =>
+          c.type === 'main' &&
+          c.name.startsWith('main-illustration') &&
+          allowedBackgrounds.some(bg => selection.background.startsWith(bg))
+        );
+        if (eligibleMainIllustrations.length > 1) {
+          // Group by base (e.g., main-illustration-tech-brain)
+          const baseMap = new Map<string, ComponentInfo[]>();
+          for (const c of eligibleMainIllustrations) {
+            const base = c.name.split('-').slice(0, 4).join('-'); // e.g., main-illustration-tech-brain
+            if (!baseMap.has(base)) baseMap.set(base, []);
+            baseMap.get(base)!.push(c);
+          }
+          // Pick a random base
+          const bases = Array.from(baseMap.keys());
+          const randomBase = bases[Math.floor(Math.random() * bases.length)];
+          // Pick a random color variant from that base
+          const variants = baseMap.get(randomBase)!;
+          const randomVariant = variants[Math.floor(Math.random() * variants.length)];
+          selection.mainImage = randomVariant.name;
         }
       }
       // --- END RANDOMIZE ---
