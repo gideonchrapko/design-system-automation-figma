@@ -165,8 +165,8 @@ function categorizeComponent(component: ComponentNode): ComponentInfo | null {
     };
   }
   
-  // Supporting images: descriptive names (not main/background)
-  if (!name.includes('bg-') && !name.includes('main') && !name.includes('hero')) {
+  // Supporting images: only those starting with 'supporting-graphic-'
+  if (name.startsWith('supporting-graphic-')) {
     return {
       id: component.id,
       name: component.name,
@@ -194,6 +194,115 @@ function findMatchingLogo(companyName: string, components: ComponentInfo[]): str
   }
   
   return null;
+}
+
+// Get positioning for supporting images based on background type
+function getPositionsForBackground(bgType: string): { x: number, y: number, customSize?: {width:number, height:number} }[] {
+  const rule = AI_RULES.backgroundRules[bgType as keyof typeof AI_RULES.backgroundRules];
+  
+  if (!rule) {
+    return [{ x: 50, y: 600 }]; // default to bottom-left
+  }
+  
+  const positions: { x: number, y: number, customSize?: {width:number, height:number} }[] = [];
+  
+  rule.positions.forEach((position, idx) => {
+    switch (position) {
+      case 'bottom-left':
+        positions.push({ x: 50, y: 600 });
+        break;
+      case 'top-right':
+        positions.push({ x: 1000, y: 0 });
+        break;
+      case 'center':
+        positions.push({ x: 525, y: 325 });
+        break;
+      case 'top-left':
+        positions.push({ x: 0, y: 0 });
+        break;
+      case 'bottom-right':
+        positions.push({ x: 1000, y: 600 });
+        break;
+      case 'top-mid-left':
+        positions.push({ x: 0, y: 125 });
+        break;
+      case 'bottom-mid-left':
+        positions.push({ x: 0, y: 500 });
+        break;
+      case 'custom-bg-one-2':
+        positions.push({ x: 250, y: 750, customSize: { width: 250, height: 250 } });
+        break;
+      default:
+        positions.push({ x: 50, y: 600 });
+    }
+  });
+  
+  return positions;
+}
+
+// Helper function to find Grid layer within a node
+function findGridLayer(node: SceneNode): SceneNode | null {
+  // If the node itself is named "Grid", return it
+  if (node.name === 'Grid') {
+    return node;
+  }
+  
+  // If the node has children, search through them
+  if ('children' in node) {
+    for (const child of node.children) {
+      const found = findGridLayer(child);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  
+  return null;
+}
+
+// Debug function to print the structure of a node
+function debugNodeStructure(node: SceneNode, depth: number = 0) {
+  const indent = '  '.repeat(depth);
+  console.log(`${indent}- ${node.name} (${node.type})`);
+  
+  if ('children' in node) {
+    for (const child of node.children) {
+      debugNodeStructure(child, depth + 1);
+    }
+  }
+}
+
+function getAllowedBackgroundsForMain(mainName: string): string[] {
+  // Check for prefix match
+  if (mainName.startsWith('main-illustration')) {
+    return AI_RULES.mainImageRules['main-illustration'];
+  }
+  if (mainName.startsWith('main-3d')) {
+    return AI_RULES.mainImageRules['main-3d'];
+  }
+  if (mainName.startsWith('main-logo')) {
+    return AI_RULES.mainImageRules['main-logo'];
+  }
+  // ...other rules as needed
+  return [];
+}
+
+// Function to get relevant main images based on blog title and keywords
+function getRelevantMainImages(blogTitle: string, keywords: string, mainImages: any[]) {
+    const allWords = (blogTitle + ' ' + keywords)
+        .toLowerCase()
+        .split(/\W+/)
+        .filter(w => w.length > 2); // ignore very short words
+
+    // Score each main image by number of keyword matches
+    return mainImages
+        .map(img => {
+            const name = img.name.toLowerCase();
+            const matchCount = allWords.filter(word => name.includes(word)).length;
+            return { ...img, matchCount };
+        })
+        .filter(img => img.matchCount > 0)
+        .sort((a, b) => b.matchCount - a.matchCount); // most matches first
 }
 
 // Call OpenAI API to select components
@@ -260,6 +369,8 @@ Component Rules:
 - CRITICAL: main-logo components can ONLY use backgrounds: bg-four-green, bg-four-blue, bg-four-pink, bg-four-yellow (NOT bg-one, bg-two, bg-three)
 - PRIORITY: If the blog title or keywords mention a company name (e.g., "Botpress", "Kore.ai"), ALWAYS select the corresponding logo component (e.g., main-logo-botpress, main-logo-kore-ai) and use bg-four background
 - Try to select different background colors for variety - don't always pick the same color
+- CRITICAL: When selecting the main image, always prioritize components whose names contain keywords from the blog title or keywords (e.g., "business", "corporate", "agency" for business topics).
+- CRITICAL: If multiple main images match, prefer the one with the most relevant or specific match.
 ${backgroundRulesText}
 
 Additional Design Guidelines:
@@ -591,97 +702,6 @@ async function createTemplate(selection: TemplateSelection, components: Componen
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     throw new Error(`Failed to create template: ${errorMessage}`);
   }
-}
-
-// Get positioning for supporting images based on background type
-function getPositionsForBackground(bgType: string): { x: number, y: number, customSize?: {width:number, height:number} }[] {
-  const rule = AI_RULES.backgroundRules[bgType as keyof typeof AI_RULES.backgroundRules];
-  
-  if (!rule) {
-    return [{ x: 50, y: 600 }]; // default to bottom-left
-  }
-  
-  const positions: { x: number, y: number, customSize?: {width:number, height:number} }[] = [];
-  
-  rule.positions.forEach((position, idx) => {
-    switch (position) {
-      case 'bottom-left':
-        positions.push({ x: 50, y: 600 });
-        break;
-      case 'top-right':
-        positions.push({ x: 1000, y: 0 });
-        break;
-      case 'center':
-        positions.push({ x: 525, y: 325 });
-        break;
-      case 'top-left':
-        positions.push({ x: 0, y: 0 });
-        break;
-      case 'bottom-right':
-        positions.push({ x: 1000, y: 600 });
-        break;
-      case 'top-mid-left':
-        positions.push({ x: 0, y: 125 });
-        break;
-      case 'bottom-mid-left':
-        positions.push({ x: 0, y: 500 });
-        break;
-      case 'custom-bg-one-2':
-        positions.push({ x: 250, y: 750, customSize: { width: 250, height: 250 } });
-        break;
-      default:
-        positions.push({ x: 50, y: 600 });
-    }
-  });
-  
-  return positions;
-}
-
-// Helper function to find Grid layer within a node
-function findGridLayer(node: SceneNode): SceneNode | null {
-  // If the node itself is named "Grid", return it
-  if (node.name === 'Grid') {
-    return node;
-  }
-  
-  // If the node has children, search through them
-  if ('children' in node) {
-    for (const child of node.children) {
-      const found = findGridLayer(child);
-      if (found) {
-        return found;
-      }
-    }
-  }
-  
-  return null;
-}
-
-// Debug function to print the structure of a node
-function debugNodeStructure(node: SceneNode, depth: number = 0) {
-  const indent = '  '.repeat(depth);
-  console.log(`${indent}- ${node.name} (${node.type})`);
-  
-  if ('children' in node) {
-    for (const child of node.children) {
-      debugNodeStructure(child, depth + 1);
-    }
-  }
-}
-
-function getAllowedBackgroundsForMain(mainName: string): string[] {
-  // Check for prefix match
-  if (mainName.startsWith('main-illustration')) {
-    return AI_RULES.mainImageRules['main-illustration'];
-  }
-  if (mainName.startsWith('main-3d')) {
-    return AI_RULES.mainImageRules['main-3d'];
-  }
-  if (mainName.startsWith('main-logo')) {
-    return AI_RULES.mainImageRules['main-logo'];
-  }
-  // ...other rules as needed
-  return [];
 }
 
 // Handle messages from the UI
