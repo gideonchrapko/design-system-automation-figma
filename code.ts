@@ -63,6 +63,9 @@ const AI_RULES = {
 // END CONFIGURABLE RULES
 // ============================================================================
 
+// Vercel API URL
+const VERCEL_URL = 'https://slack-webhook-personal.vercel.app';
+
 interface ComponentInfo {
   id: string;
   name: string;
@@ -103,6 +106,34 @@ const COMPONENT_RULES = {
 };
 
 figma.showUI(__html__, { width: 500, height: 600 });
+
+// Add a local cache to prevent infinite loops
+// No caching - process all requests every time
+
+// Test CORS functionality
+async function testCORS() {
+  try {
+    console.log('🧪 Testing CORS functionality...');
+    const response = await fetch(`${VERCEL_URL}/api/test-cors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'omit',
+      body: JSON.stringify({ test: 'data' })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ CORS test successful:', data);
+    } else {
+      console.error('❌ CORS test failed:', response.status, response.statusText);
+    }
+  } catch (error) {
+    console.error('❌ CORS test error:', error);
+  }
+}
+
+// Test CORS when plugin loads
+testCORS();
 
 // Get all components from the current document
 async function getAllComponents(): Promise<ComponentInfo[]> {
@@ -403,7 +434,7 @@ async function getTopMainImagePicksWithThumbnails(
     
     for (let pickIndex = 0; pickIndex < Math.min(3, chunk.length); pickIndex++) {
       const prompt = buildPrompt(chunkCopy, blogTitle, keywords);
-      const winnerName = await getBestImageFromOpenAI(apiKey, prompt);
+    const winnerName = await getBestImageFromOpenAI(apiKey, prompt);
       const winner = chunkCopy.find(m => m.name === winnerName);
       
       if (winner) {
@@ -595,8 +626,11 @@ async function createTemplate(selection: TemplateSelection, components: Componen
   try {
     // Find the selected components
     const background = components.find(
-      c => c.type === 'background' && c.name.trim().toLowerCase() === selection.background.trim().toLowerCase()
+      c => c.type === 'background' && c.name.trim().toLowerCase().startsWith(selection.background.trim().toLowerCase())
     ) || components.find(c => c.type === 'background'); // fallback to first available
+    
+    console.log(`🎨 Looking for background starting with: ${selection.background}`);
+    console.log(`🎨 Found background: ${background?.name}`);
     
     const mainImage = components.find(
       c => c.type === 'main' && c.name.trim().toLowerCase() === selection.mainImage.trim().toLowerCase()
@@ -869,3 +903,339 @@ function uint8ToBase64(bytes: Uint8Array): string {
   }
   return result;
 }
+
+interface SlackRequest {
+  id: string;
+  blogTitle: string;
+  userId: string;
+  channelId: string;
+  timestamp: number;
+  status: string;
+  selectedGraphicIndex?: number;
+  topPicks?: any[]; // Store the top picks to ensure consistency
+}
+
+async function checkForSlackRequests() {
+  try {
+    console.log('🔍 Checking for Slack requests...');
+    const response = await fetch(`${VERCEL_URL}/api/check-requests`, {
+      credentials: 'omit'
+    });
+    const data = await response.json();
+    
+    // Handle both old array format and new object format
+    let requests: SlackRequest[] = [];
+    if (Array.isArray(data)) {
+      // Old format: direct array
+      requests = data;
+    } else if (data.requests && Array.isArray(data.requests)) {
+      // New format: { requests: [...] }
+      requests = data.requests;
+    } else {
+      console.log('⚠️ Unexpected response format:', data);
+      requests = [];
+    }
+    
+    console.log(`📋 Found ${requests.length} total requests`);
+    
+    // Get current time for all calculations
+    const now = Date.now();
+    
+    // No caching - process all requests every time
+    
+    // Process only recent pending requests (less than 3 minutes old)
+    const threeMinutesAgo = now - (3 * 60 * 1000);
+    const pending = requests.filter(r => 
+      (r.status === 'pending' || r.status === 'waiting_for_selection') &&
+      r.timestamp > threeMinutesAgo
+    );
+    console.log(`⏳ Found ${pending.length} recent pending requests`);
+    
+    // Debug: Log all requests
+    console.log('🔍 All requests:');
+    requests.forEach(r => {
+      const ageMinutes = Math.floor((now - r.timestamp) / (60 * 1000));
+      const isRecent = r.timestamp > threeMinutesAgo;
+      console.log(`  - ${r.blogTitle} (ID: ${r.id}, Status: ${r.status}, Age: ${ageMinutes}m, Recent: ${isRecent})`);
+    });
+    
+    // Log old requests that are being ignored
+    const oldRequests = requests.filter(r => 
+      (r.status === 'pending' || r.status === 'waiting_for_selection') &&
+      r.timestamp <= threeMinutesAgo
+    );
+    if (oldRequests.length > 0) {
+      console.log('⏭️ Ignoring old requests:');
+      oldRequests.forEach(r => {
+        const ageMinutes = Math.floor((now - r.timestamp) / (60 * 1000));
+        console.log(`  - ${r.blogTitle} (ID: ${r.id}, Age: ${ageMinutes}m)`);
+      });
+    }
+    
+    // Process each pending request individually
+    for (const request of pending) {
+      console.log(`🚀 Processing request: ${request.blogTitle} (ID: ${request.id})`);
+      await processSlackRequest(request);
+      console.log(`✅ Finished processing request: ${request.id}`);
+    }
+  } catch (error) {
+    console.error('❌ Error checking Slack requests:', error);
+  }
+}
+
+async function processSlackRequest(request: SlackRequest) {
+  try {
+    console.log(`🎨 Processing request for: "${request.blogTitle}"`);
+    console.log(`📤 Will send response to channel: ${request.channelId}`);
+    
+    // Create all templates directly (no selection needed)
+    await createAllTemplates(request);
+    
+  } catch (error) {
+    console.error('Error processing Slack request:', error);
+    const message = error instanceof Error ? error.message : 
+                   (typeof error === 'object' && error !== null) ? JSON.stringify(error) : 
+                   String(error);
+    await sendSlackError(request, message);
+  }
+}
+
+async function createAllTemplates(request: SlackRequest) {
+  try {
+    console.log(`🎯 Creating all 5 templates for: "${request.blogTitle}"`);
+    
+    // Mark as processing
+    await updateRequestStatus(request.id, 'processing', 'Creating all templates...');
+    
+    // Get components
+    const components = await getAllComponents();
+    console.log(`🔧 Found ${components.length} total components`);
+    
+    if (components.length === 0) {
+      console.log('❌ No components found in Figma file');
+      await sendSlackError(request, 'No components found in Figma file');
+      return;
+    }
+    
+    // Get main images
+    const mainImages = components.filter(c => c.type === 'main');
+    console.log(`🖼️ Found ${mainImages.length} main images`);
+    
+    if (mainImages.length === 0) {
+      console.log('❌ No main images found in Figma file');
+      await sendSlackError(request, 'No main images found in Figma file');
+      return;
+    }
+    
+    // Get top picks
+    const topPicks = await getTopPickFromEveryChunk(
+      'REDACTED',
+      mainImages, 
+      request.blogTitle, 
+      ''
+    );
+    
+    console.log(`🎯 Creating templates for top picks:`, topPicks.map(p => p.name));
+    
+    // Create all 5 templates
+    const downloadLinks = [];
+    
+    for (let i = 0; i < topPicks.length; i++) {
+      const selectedPick = topPicks[i];
+      console.log(`🎨 Creating template ${i + 1}/5 with: ${selectedPick.name}`);
+      
+      // Get allowed backgrounds for this main image
+      const allowedBackgrounds = getAllowedBackgroundsForMain(selectedPick.name);
+      const background = allowedBackgrounds.length > 0 
+        ? allowedBackgrounds[Math.floor(Math.random() * allowedBackgrounds.length)] 
+        : 'bg-one';
+      
+      // Create template selection
+      const selection: TemplateSelection = {
+        background: background,
+        mainImage: selectedPick.name,
+        supportingImages: [], // We'll let AI select these
+        layout: 'standard',
+        reasoning: `Selected ${selectedPick.name} as main image with ${background} background`
+      };
+      
+      // Let AI select supporting images
+      const aiSelection = await selectComponentsWithAI(
+        'REDACTED',
+        request.blogTitle,
+        '',
+        components
+      );
+      
+      // Override main image with our selection
+      aiSelection.mainImage = selectedPick.name;
+      aiSelection.background = background;
+      
+      // Create the template
+      const pngBytes = await createTemplate(aiSelection, components);
+      
+      // Convert to WebP and upload
+      const webpData = await convertToWebP(pngBytes);
+      const uploadResult = await uploadImageForDownload(webpData, `${request.blogTitle}_Option_${i + 1}`);
+      
+      if (uploadResult.success && uploadResult.downloadUrl) {
+        downloadLinks.push({
+          option: i + 1,
+          name: selectedPick.name,
+          url: uploadResult.downloadUrl
+        });
+        console.log(`✅ Template ${i + 1} uploaded: ${uploadResult.downloadUrl}`);
+      } else {
+        console.log(`❌ Failed to upload template ${i + 1}`);
+      }
+    }
+    
+    // Send all download links to Slack
+    const message = `🎨 Here are all 5 templates for "${request.blogTitle}":\n\n` +
+      downloadLinks.map(link => 
+        `**Option ${link.option}** (${link.name}):\n${link.url}`
+      ).join('\n\n') +
+      `\n\nChoose the template you prefer by downloading the one you like best!`;
+    
+    await sendSlackMessage(request.channelId, message);
+    console.log(`📤 All templates sent to channel: ${request.channelId}`);
+    
+    // Mark as completed
+    await updateRequestStatus(request.id, 'completed', 'All templates created and sent');
+    
+  } catch (error) {
+    console.error('Error creating all templates:', error);
+    const message = error instanceof Error ? error.message : 
+                   (typeof error === 'object' && error !== null) ? JSON.stringify(error) : 
+                   String(error);
+    await sendSlackError(request, message);
+  }
+}
+
+async function sendSlackError(request: SlackRequest, errorMessage: string) {
+  try {
+    console.log(`🚨 Sending error message: ${errorMessage}`);
+    await updateRequestStatus(request.id, 'error', errorMessage);
+    await sendSlackMessage(request.channelId, `❌ Error creating template for "${request.blogTitle}": ${errorMessage}`);
+  } catch (error) {
+    console.error('Error in sendSlackError:', error);
+    console.error('Original error message:', errorMessage);
+  }
+}
+
+async function updateRequestStatus(requestId: string, status: string, message: string) {
+  try {
+    console.log(`🔄 Updating request ${requestId} to status: ${status}`);
+    const response = await fetch(`${VERCEL_URL}/api/check-requests?updateStatus=true&requestId=${requestId}&status=${status}`, {
+      method: 'GET',
+      credentials: 'omit'
+    });
+    
+    if (!response.ok) {
+      console.error(`❌ Failed to update status: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error(`Error details: ${errorText}`);
+    } else {
+      console.log(`✅ Successfully updated request ${requestId} to ${status}`);
+    }
+  } catch (error) {
+    console.error(`❌ CORS/Network error updating status for ${requestId}:`, error);
+  }
+}
+
+async function sendSlackMessage(channelId: string, message: string) {
+  try {
+    console.log(`📤 Sending message to channel ${channelId}: ${message}`);
+    
+    // First test the new endpoint
+    console.log('🧪 Testing new endpoint...');
+    const testResponse = await fetch(`${VERCEL_URL}/api/test-slack-message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'omit',
+      body: JSON.stringify({ test: 'data' })
+    });
+    
+    if (testResponse.ok) {
+      const testData = await testResponse.json();
+      console.log('✅ Test endpoint working:', testData);
+    } else {
+      console.error('❌ Test endpoint failed:', testResponse.status, testResponse.statusText);
+    }
+    
+    // Now try the actual slack-messages endpoint
+    const response = await fetch(`${VERCEL_URL}/api/slack-messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'omit',
+      body: JSON.stringify({ channel: channelId, text: message })
+    });
+    
+    if (!response.ok) {
+      console.error(`❌ Failed to send Slack message: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error(`Error details: ${errorText}`);
+    } else {
+      console.log(`✅ Successfully sent message to channel ${channelId}`);
+    }
+  } catch (error) {
+    console.error(`❌ CORS/Network error sending Slack message:`, error);
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      error: error
+    });
+  }
+}
+
+async function convertToWebP(pngBytes: Uint8Array): Promise<string> {
+  try {
+    console.log('🔄 Converting PNG to WebP...');
+    
+    // For now, we'll return the PNG data as base64
+    // In a real implementation, you'd use a WebP conversion library
+    const base64Data = uint8ToBase64(pngBytes);
+    
+    console.log('✅ PNG converted to base64');
+    return base64Data;
+  } catch (error) {
+    console.error('❌ Error converting to WebP:', error);
+    throw error;
+  }
+}
+
+async function uploadImageForDownload(imageData: string, blogTitle: string): Promise<{ success: boolean; downloadUrl?: string; error?: string }> {
+  try {
+    console.log('📤 Uploading image for download...');
+    
+    const response = await fetch(`${VERCEL_URL}/api/upload-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'omit',
+      body: JSON.stringify({
+        imageData: imageData,
+        fileName: blogTitle.replace(/[^a-zA-Z0-9]/g, '_'),
+        blogTitle: blogTitle
+      })
+    });
+    
+    if (!response.ok) {
+      console.error(`❌ Failed to upload image: ${response.status} ${response.statusText}`);
+      return { success: false, error: 'Upload failed' };
+    }
+    
+    const result = await response.json();
+    console.log('✅ Image uploaded successfully:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ Error uploading image:', error);
+    return { success: false, error: 'Upload error' };
+  }
+}
+
+// Start polling when plugin loads
+console.log('🚀 Plugin loaded, starting Slack request polling...');
+setInterval(checkForSlackRequests, 5000);
+
+// Also check immediately
+checkForSlackRequests();

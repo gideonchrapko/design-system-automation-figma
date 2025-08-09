@@ -178,6 +178,7 @@
         margin-top: 12px;
         border: 1px solid #f5c6cb;
       }
+
     </style>
   </head>
   <body>
@@ -306,118 +307,10 @@
         } else if (msg.type === 'error') {
           showError(msg.message);
         }
-        else if (msg.type === 'main-image-picks') {
-          showMainImageSelection(msg.picks, msg.blogTitle, msg.keywords);
-        }
+        // Removed main-image-picks handling - no longer needed
       };
 
-      function showMainImageSelection(picks, blogTitle, keywords) {
-        hideLoading();
-        document.getElementById('result').style.display = 'none';
-        document.getElementById('error').style.display = 'none';
-        // Remove any previous selection UI
-        let old = document.getElementById('mainImageSelection');
-        if (old) old.remove();
-        // Create selection UI
-        const container = document.createElement('div');
-        container.id = 'mainImageSelection';
-        container.style.marginTop = '24px';
-        container.style.background = '#f0f8ff';
-        container.style.border = '1px solid #007AFF';
-        container.style.borderRadius = '8px';
-        container.style.padding = '20px';
-        container.style.textAlign = 'left';
-        const title = document.createElement('h3');
-        title.textContent = 'Pick a Main Image';
-        title.style.color = '#007AFF';
-        title.style.marginBottom = '12px';
-        container.appendChild(title);
-        // Grid container
-        const gridContainer = document.createElement('div');
-        gridContainer.style.display = 'grid';
-        gridContainer.style.gridTemplateColumns = 'repeat(3, 1fr)';
-        gridContainer.style.gap = '12px';
-        gridContainer.style.marginBottom = '16px';
-        gridContainer.style.maxHeight = '300px';
-        gridContainer.style.overflowY = 'auto';
-        gridContainer.style.padding = '4px';
-        picks.forEach((pick, idx) => {
-          const card = document.createElement('label');
-          card.style.display = 'flex';
-          card.style.flexDirection = 'column';
-          card.style.alignItems = 'center';
-          card.style.justifyContent = 'center';
-          card.style.border = '2px solid #e1e5e9';
-          card.style.borderRadius = '8px';
-          card.style.padding = '8px';
-          card.style.cursor = 'pointer';
-          card.style.background = 'white';
-          card.style.transition = 'border-color 0.2s, transform 0.2s';
-          card.style.minHeight = '100px';
-          card.onmouseenter = () => {
-            card.style.borderColor = '#007AFF';
-            card.style.transform = 'scale(1.05)';
-          };
-          card.onmouseleave = () => {
-            if (!radio.checked) {
-              card.style.borderColor = '#e1e5e9';
-              card.style.transform = 'scale(1)';
-            }
-          };
-          const radio = document.createElement('input');
-          radio.type = 'radio';
-          radio.name = 'mainImagePick';
-          radio.value = pick.name;
-          radio.style.marginBottom = '6px';
-          radio.style.cursor = 'pointer';
-          if (idx === 0) radio.checked = true;
-          radio.onchange = () => {
-            // Unselect all other cards
-            Array.from(gridContainer.children).forEach(lab => {
-              lab.style.borderColor = '#e1e5e9';
-              lab.style.transform = 'scale(1)';
-            });
-            card.style.borderColor = '#007AFF';
-            card.style.transform = 'scale(1.05)';
-          };
-          card.appendChild(radio);
-          // Image
-          const img = document.createElement('img');
-          img.src = pick.thumbnail;
-          img.alt = pick.name;
-          img.style.width = '60px';
-          img.style.height = '60px';
-          img.style.objectFit = 'contain';
-          img.style.borderRadius = '4px';
-          card.appendChild(img);
-          gridContainer.appendChild(card);
-        });
-        container.appendChild(gridContainer);
-        // Confirm button
-        const confirmBtn = document.createElement('button');
-        confirmBtn.textContent = 'Confirm Selection';
-        confirmBtn.style.marginTop = '8px';
-        confirmBtn.onclick = function() {
-          const selected = container.querySelector('input[name="mainImagePick"]:checked');
-          if (!selected) return;
-          // Hide selection UI and show loading
-          container.remove();
-          document.getElementById('loading').style.display = 'block';
-          document.getElementById('generate').disabled = true;
-          parent.postMessage({
-            pluginMessage: {
-              type: 'main-image-selected',
-              apiKey: document.getElementById('apiKey').value.trim(),
-              blogTitle: blogTitle,
-              keywords: keywords,
-              selectedMainImage: selected.value
-            }
-          }, '*');
-        };
-        container.appendChild(confirmBtn);
-        // Insert into DOM
-        document.querySelector('.container').appendChild(container);
-      }
+      // Removed showMainImageSelection function - no longer needed
 
       async function convertAndShowDownload(pngBlob) {
         const img = new Image();

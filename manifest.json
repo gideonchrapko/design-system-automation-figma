@@ -12,7 +12,8 @@
   "ui": "ui.html",
   "networkAccess": {
     "allowedDomains": [
-      "https://api.openai.com"
+      "https://api.openai.com",
+      "https://slack-webhook-personal.vercel.app"
     ]
   }
 }

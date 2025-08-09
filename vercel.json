@@ -1,0 +1,35 @@
+{
+  "projectId": "prj_47dBvY6BDBszQd0xkfjoNB7BSRyo",
+  "orgId": "team_nAg7xPD0qP0ebX97aOvMQSR2",
+  "functions": {
+    "api/slack-webhook.js": {
+      "runtime": "@vercel/node"
+    },
+    "api/test.js": {
+      "runtime": "@vercel/node"
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization, X-Requested-With"
+        },
+        {
+          "key": "Access-Control-Max-Age",
+          "value": "86400"
+        }
+      ]
+    }
+  ]
+} 
