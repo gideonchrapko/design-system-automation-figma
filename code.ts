@@ -363,26 +363,46 @@ Respond with the exact name of the most relevant main image from the list above.
 `;
 }
 
-async function getBestImageFromOpenAI(apiKey: string, prompt: string): Promise<string> {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+async function callOpenAIChat(apiKey: string | null, prompt: string, maxTokens: number = 50): Promise<string> {
+  // If an API key is provided (UI flow), call OpenAI directly. Otherwise, use server proxy (Slack flow)
+  if (apiKey && apiKey.trim() !== '') {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.7,
+        max_tokens: maxTokens
+      })
+    });
+    const data = await response.json();
+    return (data.choices?.[0]?.message?.content ?? '').trim();
+  }
+  // No API key available locally: use Vercel proxy that holds the key in env
+  const proxyResponse = await fetch(`${VERCEL_URL}/api/openai-chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o', // or 'gpt-4' if you don't have access to 4o
-      messages: [
-        { role: 'system', content: 'You are a helpful assistant.' },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.7,
-      max_tokens: 50
-    })
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'omit',
+    body: JSON.stringify({ prompt, max_tokens: maxTokens, temperature: 0.7 })
   });
-  const data = await response.json();
-  // Extract the first line or the trimmed content as the name
-  return data.choices[0].message.content.trim().split('\n')[0].replace(/^Best main image:\s*/i, '').trim();
+  if (!proxyResponse.ok) {
+    const text = await proxyResponse.text();
+    throw new Error(`OpenAI proxy error: ${proxyResponse.status} ${proxyResponse.statusText} - ${text}`);
+  }
+  const proxyData = await proxyResponse.json();
+  return (proxyData.content ?? '').trim();
+}
+
+async function getBestImageFromOpenAI(apiKey: string | null, prompt: string): Promise<string> {
+  const content = await callOpenAIChat(apiKey, prompt, 50);
+  return content.trim().split('\n')[0].replace(/^Best main image:\s*/i, '').trim();
 }
 
 async function pickBestMainImage(
@@ -412,7 +432,7 @@ async function pickBestMainImage(
 
 // Add a new function to get top picks from each chunk, limited to 3, and export thumbnails
 async function getTopMainImagePicksWithThumbnails(
-  apiKey: string,
+  apiKey: string | null,
   mainImages: ComponentInfo[],
   blogTitle: string,
   keywords: string,
@@ -434,7 +454,7 @@ async function getTopMainImagePicksWithThumbnails(
     
     for (let pickIndex = 0; pickIndex < Math.min(3, chunk.length); pickIndex++) {
       const prompt = buildPrompt(chunkCopy, blogTitle, keywords);
-    const winnerName = await getBestImageFromOpenAI(apiKey, prompt);
+      const winnerName = await getBestImageFromOpenAI(apiKey, prompt);
       const winner = chunkCopy.find(m => m.name === winnerName);
       
       if (winner) {
@@ -469,7 +489,7 @@ async function getTopMainImagePicksWithThumbnails(
 
 // New function to get the top pick from every single chunk
 async function getTopPickFromEveryChunk(
-  apiKey: string,
+  apiKey: string | null,
   mainImages: ComponentInfo[],
   blogTitle: string,
   keywords: string,
@@ -513,7 +533,7 @@ async function getTopPickFromEveryChunk(
 
 // Call OpenAI API to select main image only
 async function selectComponentsWithAI(
-  apiKey: string,
+  apiKey: string | null,
   blogTitle: string,
   keywords: string,
   components: ComponentInfo[]
@@ -562,25 +582,7 @@ Why this is the best match: <1-3 bullet points explaining your reasoning>
 `;
 
   // Call OpenAI to pick the main image
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: 'You are a helpful assistant.' },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.7,
-      max_tokens: 50
-    })
-  });
-
-  const data = await response.json();
-  const content = data.choices[0].message.content.trim();
+  const content = await callOpenAIChat(apiKey, prompt, 50);
   const match = content.match(/Best main image:\s*([^\n]+)/i);
   const mainImageName = match ? match[1].trim() : '';
   const mainImage = mainImages.find(m => m.name === mainImageName);
@@ -1029,8 +1031,8 @@ async function createAllTemplates(request: SlackRequest) {
     
     // Get top picks
     const topPicks = await getTopPickFromEveryChunk(
-      'REDACTED',
-      mainImages, 
+      null,
+      mainImages,
       request.blogTitle, 
       ''
     );
@@ -1061,7 +1063,7 @@ async function createAllTemplates(request: SlackRequest) {
       
       // Let AI select supporting images
       const aiSelection = await selectComponentsWithAI(
-        'REDACTED',
+        null,
         request.blogTitle,
         '',
         components
