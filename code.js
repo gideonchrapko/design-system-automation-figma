@@ -1,7 +1,13 @@
 "use strict";
-// AI Blog Template Generator Plugin
+// ============================================================================
+// AI Blog Template Generator Plugin - SOURCE OF TRUTH
+// ============================================================================
 // This plugin uses OpenAI to intelligently select and organize Figma components
 // based on blog title and keywords to create custom templates
+// 
+// IMPORTANT: This is the source file. Do not edit code.js directly.
+// All changes must be made to this file (code.ts) and then compiled.
+// ============================================================================
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -501,17 +507,36 @@ Why this is the best match: <1-3 bullet points explaining your reasoning>
         if (!mainImage) {
             throw new Error('AI did not return a valid main image name.');
         }
+        console.log(`🎨 AI selected main image: ${mainImage.name}`);
+        console.log(`🎨 Available backgrounds for this main image: ${getAllowedBackgroundsForMain(mainImage.name).join(', ')}`);
         // Use rules to pick a valid background for the main image
         const allowedBackgrounds = getAllowedBackgroundsForMain(mainImage.name); // e.g., ['bg-one', 'bg-two']
         const availableBackgrounds = backgrounds.filter(bg => allowedBackgrounds.some(type => bg.name.startsWith(type)));
         if (availableBackgrounds.length === 0) {
             throw new Error('No valid backgrounds available for the selected main image.');
         }
-        const background = availableBackgrounds[Math.floor(Math.random() * availableBackgrounds.length)];
+        // Ensure we get variety in background colors by grouping by base type
+        const backgroundGroups = {};
+        availableBackgrounds.forEach(bg => {
+            const baseType = bg.name.split('-').slice(0, 2).join('-'); // e.g., 'bg-one' from 'bg-one-green'
+            if (!backgroundGroups[baseType]) {
+                backgroundGroups[baseType] = [];
+            }
+            backgroundGroups[baseType].push(bg);
+        });
+        console.log(`🎨 Available background groups:`, backgroundGroups);
+        // Randomly select a base type, then randomly select from that group
+        const baseTypes = Object.keys(backgroundGroups);
+        const selectedBaseType = baseTypes[Math.floor(Math.random() * baseTypes.length)];
+        const selectedGroup = backgroundGroups[selectedBaseType];
+        const background = selectedGroup[Math.floor(Math.random() * selectedGroup.length)];
+        console.log(`🎨 Selected background: ${background.name} from group ${selectedBaseType}`);
+        console.log(`🎨 All backgrounds in selected group: ${selectedGroup.map(bg => bg.name).join(', ')}`);
         // Use rules to pick supporting images for the background
         const bgType = background.name.split('-').slice(0, 2).join('-');
         const rule = AI_RULES.backgroundRules[bgType];
         const numSupporting = rule ? rule.maxSupporting : 1;
+        console.log(`🎨 Background type: ${bgType}, max supporting images: ${numSupporting}`);
         const supportingPool = [...supportingImages];
         const supportingImagesPicked = [];
         for (let i = 0; i < numSupporting && supportingPool.length > 0; i++) {
@@ -519,6 +544,7 @@ Why this is the best match: <1-3 bullet points explaining your reasoning>
             supportingImagesPicked.push(supportingPool[idx].name);
             supportingPool.splice(idx, 1);
         }
+        console.log(`🎨 Selected supporting images: ${supportingImagesPicked.join(', ')}`);
         // Return the selection
         return {
             background: background.name,
@@ -894,9 +920,34 @@ function createAllTemplates(request) {
                 console.log(`🎨 Creating template ${i + 1}/5 with: ${selectedPick.name}`);
                 // Get allowed backgrounds for this main image
                 const allowedBackgrounds = getAllowedBackgroundsForMain(selectedPick.name);
-                const background = allowedBackgrounds.length > 0
-                    ? allowedBackgrounds[Math.floor(Math.random() * allowedBackgrounds.length)]
-                    : 'bg-one';
+                // Get all available background components
+                const backgroundComponents = components.filter(c => c.type === 'background');
+                // Filter to only allowed background types
+                const availableBackgrounds = backgroundComponents.filter(bg => allowedBackgrounds.some(type => bg.name.startsWith(type)));
+                let background;
+                if (availableBackgrounds.length > 0) {
+                    // Group backgrounds by base type for variety
+                    const backgroundGroups = {};
+                    availableBackgrounds.forEach(bg => {
+                        const baseType = bg.name.split('-').slice(0, 2).join('-');
+                        if (!backgroundGroups[baseType]) {
+                            backgroundGroups[baseType] = [];
+                        }
+                        backgroundGroups[baseType].push(bg);
+                    });
+                    // Randomly select a base type, then randomly select from that group
+                    const baseTypes = Object.keys(backgroundGroups);
+                    const selectedBaseType = baseTypes[Math.floor(Math.random() * baseTypes.length)];
+                    const selectedGroup = backgroundGroups[selectedBaseType];
+                    const selectedBg = selectedGroup[Math.floor(Math.random() * selectedGroup.length)];
+                    background = selectedBg.name;
+                    console.log(`🎨 Template ${i + 1}: Selected background ${background} from group ${selectedBaseType}`);
+                }
+                else {
+                    // Fallback to first available background
+                    background = backgroundComponents.length > 0 ? backgroundComponents[0].name : 'bg-one';
+                    console.log(`🎨 Template ${i + 1}: Using fallback background ${background}`);
+                }
                 // Create template selection
                 const selection = {
                     background: background,
