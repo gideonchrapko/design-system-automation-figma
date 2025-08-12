@@ -72,6 +72,65 @@ const AI_RULES = {
 // ============================================================================
 // END CONFIGURABLE RULES
 // ============================================================================
+// ============================================================================
+// USAGE TRACKING SYSTEM - Prevents overuse of specific images
+// ============================================================================
+// In-memory usage tracking (resets when plugin restarts)
+const imageUsageTracker = {};
+// Function to get usage count for an image
+function getImageUsageCount(imageName) {
+    return imageUsageTracker[imageName] || 0;
+}
+// Function to increment usage count for an image
+function incrementImageUsage(imageName) {
+    imageUsageTracker[imageName] = (imageUsageTracker[imageName] || 0) + 1;
+    const currentCount = imageUsageTracker[imageName];
+    console.log(`📊 Usage updated for ${imageName}: ${currentCount} times used`);
+    // Log warning if image is being overused
+    if (currentCount >= 3) {
+        console.log(`⚠️  WARNING: ${imageName} has been used ${currentCount} times - consider using less frequently`);
+    }
+}
+// Function to get least used images from a list
+function getLeastUsedImages(images, maxCount = 3) {
+    // Sort by usage count (ascending) and take the least used
+    const sortedByUsage = [...images].sort((a, b) => {
+        const usageA = getImageUsageCount(a.name);
+        const usageB = getImageUsageCount(b.name);
+        return usageA - usageB;
+    });
+    return sortedByUsage.slice(0, maxCount);
+}
+// Function to get usage statistics
+function getUsageStatistics() {
+    return Object.assign({}, imageUsageTracker);
+}
+// Function to log current usage statistics
+function logUsageStatistics() {
+    const stats = getUsageStatistics();
+    const sortedStats = [];
+    for (const imageName of Object.keys(stats)) {
+        sortedStats.push([imageName, stats[imageName]]);
+    }
+    sortedStats.sort(([, a], [, b]) => b - a);
+    console.log(`📊 Current Image Usage Statistics:`);
+    if (sortedStats.length === 0) {
+        console.log(`  No images have been used yet.`);
+    }
+    else {
+        sortedStats.forEach(([imageName, count]) => {
+            console.log(`  ${imageName}: ${count} times`);
+        });
+    }
+}
+// Function to reset usage tracking (useful for testing or when plugin restarts)
+function resetUsageTracking() {
+    Object.keys(imageUsageTracker).forEach(key => delete imageUsageTracker[key]);
+    console.log(`🔄 Usage tracking reset - all counts cleared`);
+}
+// ============================================================================
+// END USAGE TRACKING SYSTEM
+// ============================================================================
 // Vercel API URL
 const VERCEL_URL = 'https://slack-webhook-personal.vercel.app';
 // Component selection rules
@@ -438,11 +497,44 @@ function getTopPickFromEveryChunk(apiKey_1, mainImages_1, blogTitle_1, keywords_
             const winner = chunk.find(m => m.name === winnerName);
             if (winner) {
                 console.log(`  🏆 Top pick from chunk ${chunkIndex + 1}: ${winner.name}`);
+                // Add variety: sometimes use a different relevant image from the same chunk
+                let finalWinner = winner;
+                if (chunk.length > 1 && Math.random() < 0.6) { // 60% chance for variety
+                    const relevantImages = chunk.filter(img => {
+                        const imgName = img.name.toLowerCase();
+                        const titleWords = blogTitle.toLowerCase().split(/\W+/).filter(w => w.length > 2);
+                        const keywordWords = keywords.toLowerCase().split(/\W+/).filter(w => w.length > 2);
+                        const allWords = [...titleWords, ...keywordWords];
+                        return allWords.some(word => imgName.includes(word));
+                    });
+                    if (relevantImages.length > 1) {
+                        // Prioritize less-used images when selecting variety
+                        const otherRelevant = relevantImages.filter(img => img.name !== winner.name);
+                        if (otherRelevant.length > 0) {
+                            // Get the least used relevant image for better variety
+                            const leastUsedRelevant = getLeastUsedImages(otherRelevant, 1);
+                            if (leastUsedRelevant.length > 0) {
+                                finalWinner = leastUsedRelevant[0];
+                                const winnerUsage = getImageUsageCount(winner.name);
+                                const finalWinnerUsage = getImageUsageCount(finalWinner.name);
+                                console.log(`  🎲 Variety mode: Using ${finalWinner.name} (usage: ${finalWinnerUsage}) instead of ${winner.name} (usage: ${winnerUsage})`);
+                            }
+                            else {
+                                // Fallback to random selection if usage tracking fails
+                                const randomIndex = Math.floor(Math.random() * otherRelevant.length);
+                                finalWinner = otherRelevant[randomIndex];
+                                console.log(`  🎲 Variety mode: Using ${finalWinner.name} instead of ${winner.name} (random fallback)`);
+                            }
+                        }
+                    }
+                }
                 // Export thumbnail for this pick (100px width)
-                const bytes = yield winner.node.exportAsync({ format: 'PNG', constraint: { type: 'WIDTH', value: 100 } });
+                const bytes = yield finalWinner.node.exportAsync({ format: 'PNG', constraint: { type: 'WIDTH', value: 100 } });
                 const base64 = uint8ToBase64(bytes);
+                // Track usage of this image
+                incrementImageUsage(finalWinner.name);
                 chunkTopPicks.push({
-                    name: winner.name,
+                    name: finalWinner.name,
                     thumbnail: `data:image/png;base64,${base64}`,
                     chunkNumber: chunkIndex + 1
                 });
@@ -468,8 +560,8 @@ Your job is to pick the most semantically relevant main image for a blog post, u
 
 Rules:
 - Prioritize image names that contain any of the title or keyword terms, even partially.
-- Pick the most relevant and specific match.
-- If multiple options are similar, choose the one that captures the **core concept** of the post.
+- Pick a relevant match, but don't always choose the most obvious one.
+- Consider variety and different visual approaches.
 - Never fabricate a name — choose only from the provided list.
 
 Available main images:
@@ -495,22 +587,110 @@ Why this is the best match:
 Blog Title: "${blogTitle}"
 Keywords: "${keywords}"
 
-Respond in this format:
-Best main image: <exact name from the list above>
-Why this is the best match: <1-3 bullet points explaining your reasoning>
+IMPORTANT: You must respond in exactly this format:
+Best main image: [exact name from the list above]
+Why this is the best match: [1-3 bullet points explaining your reasoning]
+
+Do not add any other text, formatting, or explanations outside of this format.
 `;
         // Call OpenAI to pick the main image
         const content = yield callOpenAIChat(apiKey, prompt, 50);
+        console.log(`🤖 Raw AI response: "${content}"`);
         const match = content.match(/Best main image:\s*([^\n]+)/i);
         const mainImageName = match ? match[1].trim() : '';
+        console.log(`🔍 Extracted main image name: "${mainImageName}"`);
         const mainImage = mainImages.find(m => m.name === mainImageName);
+        console.log(`🔍 Found main image in components:`, mainImage ? mainImage.name : 'NOT FOUND');
+        console.log(`🔍 Available main images:`, mainImages.map(m => m.name));
+        // If AI selection fails, use intelligent fallback with variety
         if (!mainImage) {
-            throw new Error('AI did not return a valid main image name.');
+            console.error(`❌ AI response parsing failed:`);
+            console.error(`   - Raw response: "${content}"`);
+            console.error(`   - Extracted name: "${mainImageName}"`);
+            console.error(`   - Available images:`, mainImages.map(m => m.name));
+            // Try to find a fallback by looking for any image name in the response
+            console.log(`🔄 Attempting fallback parsing...`);
+            for (const img of mainImages) {
+                if (content.toLowerCase().includes(img.name.toLowerCase())) {
+                    console.log(`✅ Fallback found: ${img.name}`);
+                    const fallbackImage = img;
+                    console.log(`🎨 AI selected main image (fallback): ${fallbackImage.name}`);
+                    console.log(`🎨 Available backgrounds for this main image: ${getAllowedBackgroundsForMain(fallbackImage.name).join(', ')}`);
+                    // Continue with fallback image
+                    const allowedBackgrounds = getAllowedBackgroundsForMain(fallbackImage.name);
+                    const availableBackgrounds = backgrounds.filter(bg => allowedBackgrounds.some(type => bg.name.startsWith(type)));
+                    if (availableBackgrounds.length === 0) {
+                        throw new Error('No valid backgrounds available for the selected main image.');
+                    }
+                    // Ensure we get variety in background colors by grouping by base type
+                    const backgroundGroups = {};
+                    availableBackgrounds.forEach(bg => {
+                        const baseType = bg.name.split('-').slice(0, 2).join('-');
+                        if (!backgroundGroups[baseType]) {
+                            backgroundGroups[baseType] = [];
+                        }
+                        backgroundGroups[baseType].push(bg);
+                    });
+                    console.log(`🎨 Available background groups:`, backgroundGroups);
+                    // Randomly select a base type, then randomly select from that group
+                    const baseTypes = Object.keys(backgroundGroups);
+                    const selectedBaseType = baseTypes[Math.floor(Math.random() * baseTypes.length)];
+                    const selectedGroup = backgroundGroups[selectedBaseType];
+                    const background = selectedGroup[Math.floor(Math.random() * selectedGroup.length)];
+                    console.log(`🎨 Selected background: ${background.name} from group ${selectedBaseType}`);
+                    console.log(`🎨 All backgrounds in selected group: ${selectedGroup.map(bg => bg.name).join(', ')}`);
+                    // Use rules to pick supporting images for the background
+                    const bgType = background.name.split('-').slice(0, 2).join('-');
+                    const rule = AI_RULES.backgroundRules[bgType];
+                    const numSupporting = rule ? rule.maxSupporting : 1;
+                    console.log(`🎨 Background type: ${bgType}, max supporting images: ${numSupporting}`);
+                    const supportingPool = [...supportingImages];
+                    const supportingImagesPicked = [];
+                    for (let i = 0; i < numSupporting && supportingPool.length > 0; i++) {
+                        const idx = Math.floor(Math.random() * supportingPool.length);
+                        supportingImagesPicked.push(supportingPool[idx].name);
+                        supportingPool.splice(idx, 1);
+                    }
+                    console.log(`🎨 Selected supporting images: ${supportingImagesPicked.join(', ')}`);
+                    // Track usage of the fallback image
+                    incrementImageUsage(fallbackImage.name);
+                    // Return the selection with fallback image
+                    return {
+                        background: background.name,
+                        mainImage: fallbackImage.name,
+                        supportingImages: supportingImagesPicked,
+                        layout: '',
+                        reasoning: 'Main image selected by AI fallback, background and supporting images selected by design rules.'
+                    };
+                }
+            }
+            throw new Error(`AI did not return a valid main image name. Response: "${content}"`);
         }
+        // AI selection succeeded, but let's add variety by sometimes using a different relevant image
         console.log(`🎨 AI selected main image: ${mainImage.name}`);
         console.log(`🎨 Available backgrounds for this main image: ${getAllowedBackgroundsForMain(mainImage.name).join(', ')}`);
+        // Find other relevant images to add variety
+        const relevantImages = mainImages.filter(img => {
+            const imgName = img.name.toLowerCase();
+            const titleWords = blogTitle.toLowerCase().split(/\W+/).filter(w => w.length > 2);
+            const keywordWords = keywords.toLowerCase().split(/\W+/).filter(w => w.length > 2);
+            const allWords = [...titleWords, ...keywordWords];
+            return allWords.some(word => imgName.includes(word));
+        });
+        console.log(`🎨 Found ${relevantImages.length} relevant images for variety`);
+        // 30% chance to use a different relevant image for variety
+        let finalMainImage = mainImage;
+        if (relevantImages.length > 1 && Math.random() < 0.3) {
+            const otherRelevantImages = relevantImages.filter(img => img.name !== mainImage.name);
+            if (otherRelevantImages.length > 0) {
+                const randomIndex = Math.floor(Math.random() * otherRelevantImages.length);
+                finalMainImage = otherRelevantImages[randomIndex];
+                console.log(`🎨 Variety mode: Using different relevant image: ${finalMainImage.name}`);
+            }
+        }
+        console.log(`🎨 Final main image selected: ${finalMainImage.name}`);
         // Use rules to pick a valid background for the main image
-        const allowedBackgrounds = getAllowedBackgroundsForMain(mainImage.name); // e.g., ['bg-one', 'bg-two']
+        const allowedBackgrounds = getAllowedBackgroundsForMain(finalMainImage.name); // e.g., ['bg-one', 'bg-two']
         const availableBackgrounds = backgrounds.filter(bg => allowedBackgrounds.some(type => bg.name.startsWith(type)));
         if (availableBackgrounds.length === 0) {
             throw new Error('No valid backgrounds available for the selected main image.');
@@ -545,13 +725,15 @@ Why this is the best match: <1-3 bullet points explaining your reasoning>
             supportingPool.splice(idx, 1);
         }
         console.log(`🎨 Selected supporting images: ${supportingImagesPicked.join(', ')}`);
+        // Track usage of the selected main image
+        incrementImageUsage(finalMainImage.name);
         // Return the selection
         return {
             background: background.name,
-            mainImage: mainImage.name,
+            mainImage: finalMainImage.name,
             supportingImages: supportingImagesPicked,
             layout: '',
-            reasoning: 'Main image selected by AI, background and supporting images selected by design rules.'
+            reasoning: 'Main image selected by AI with variety, background and supporting images selected by design rules.'
         };
     });
 }
@@ -913,6 +1095,8 @@ function createAllTemplates(request) {
             // Get top picks
             const topPicks = yield getTopPickFromEveryChunk(null, mainImages, request.blogTitle, '');
             console.log(`🎯 Creating templates for top picks:`, topPicks.map(p => p.name));
+            // Log current usage statistics
+            logUsageStatistics();
             // Create all 5 templates
             const downloadLinks = [];
             for (let i = 0; i < topPicks.length; i++) {
@@ -986,6 +1170,8 @@ function createAllTemplates(request) {
             console.log(`📤 All templates sent to channel: ${request.channelId}`);
             // Mark as completed
             yield updateRequestStatus(request.id, 'completed', 'All templates created and sent');
+            // Log final usage statistics
+            logUsageStatistics();
         }
         catch (error) {
             console.error('Error creating all templates:', error);
