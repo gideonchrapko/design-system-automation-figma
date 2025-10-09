@@ -29,6 +29,35 @@ module.exports = async (req, res) => {
         const blogTitle = text.match(/@blog create ['"]([^'"]+)['"]/)?.[1];
         
         if (blogTitle) {
+          // Check plugin availability before processing
+          try {
+            const pluginStatusResponse = await fetch(`${req.headers.host ? `https://${req.headers.host}` : 'https://slack-webhook-personal.vercel.app'}/api/check-requests?pluginStatus=true`);
+            const pluginStatus = await pluginStatusResponse.json();
+            
+            if (!pluginStatus.pluginAvailable) {
+              // Plugin is not available - send message to user
+              const botToken = process.env.SLACK_BOT_TOKEN;
+              if (botToken) {
+                await fetch('https://slack.com/api/chat.postMessage', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${botToken}`
+                  },
+                  body: JSON.stringify({
+                    channel: channel,
+                    text: `🚫 Figma plugin is not currently open!\n\n📱 To use the @blog create command, please:\n1. Open Figma\n2. Go to Plugins > AI Blog Template Generator\n3. Keep the plugin open\n4. Try your command again\n\n💡 The plugin needs to be active to process your request.`
+                  })
+                });
+                console.log('❌ Plugin not available - sent notification to user');
+                return;
+              }
+            }
+          } catch (error) {
+            console.log('⚠️ Error checking plugin status:', error);
+            // Continue processing if we can't check plugin status
+          }
+          
           // Send immediate response to user
           const botToken = process.env.SLACK_BOT_TOKEN;
           if (botToken) {
@@ -86,6 +115,26 @@ module.exports = async (req, res) => {
                   body: JSON.stringify({
                     channel: channel,
                     text: `🚫 ${errorData.error}\n\nPlease wait a moment and try again.`
+                  })
+                });
+              }
+            } else if (response.status === 503) {
+              // Plugin unavailable
+              const errorData = await response.json();
+              console.log('🚫 Plugin unavailable:', errorData.error);
+              
+              // Send plugin unavailable message to Slack
+              const botToken = process.env.SLACK_BOT_TOKEN;
+              if (botToken) {
+                fetch('https://slack.com/api/chat.postMessage', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${botToken}`
+                  },
+                  body: JSON.stringify({
+                    channel: channel,
+                    text: `🚫 ${errorData.error}\n\n📱 Please open the Figma plugin and try again.`
                   })
                 });
               }
@@ -153,12 +202,69 @@ module.exports = async (req, res) => {
               },
               body: JSON.stringify({
                 channel: channel,
-                text: `🚫 Unauthorized: Only administrators can reset the system.`
+                text: `🚫 You are not authorized to use the reset command.`
               })
             });
           }
         }
-      } else {
+      }
+      // Process @blog status command to check plugin availability
+      else if (text && text.includes('@blog status')) {
+        console.log('📊 Status check requested by:', user);
+        
+        try {
+          const pluginStatusResponse = await fetch(`${req.headers.host ? `https://${req.headers.host}` : 'https://slack-webhook-personal.vercel.app'}/api/check-requests?pluginStatus=true`);
+          const pluginStatus = await pluginStatusResponse.json();
+          
+          const botToken = process.env.SLACK_BOT_TOKEN;
+          if (botToken) {
+            let statusMessage = '';
+            
+            if (pluginStatus.pluginAvailable) {
+              const timeSince = pluginStatus.timeSinceLastHeartbeat;
+              const minutesAgo = Math.floor(timeSince / 60000);
+              const secondsAgo = Math.floor((timeSince % 60000) / 1000);
+              
+              statusMessage = `✅ Figma plugin is currently active!\n\n📱 Last heartbeat: ${minutesAgo}m ${secondsAgo}s ago\n💓 Plugin is ready to process requests\n\n🎨 You can use @blog create "Your Title" to generate templates!`;
+            } else {
+              statusMessage = `🚫 Figma plugin is not currently active!\n\n📱 To use the plugin:\n1. Open Figma\n2. Go to Plugins > AI Blog Template Generator\n3. Keep the plugin open\n4. Try @blog create "Your Title"\n\n💡 The plugin needs to be active to process requests.`;
+            }
+            
+            await fetch('https://slack.com/api/chat.postMessage', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${botToken}`
+              },
+              body: JSON.stringify({
+                channel: channel,
+                text: statusMessage
+              })
+            });
+            
+            console.log('✅ Status message sent to user');
+          }
+        } catch (error) {
+          console.log('❌ Error checking plugin status:', error);
+          
+          // Send error message
+          const botToken = process.env.SLACK_BOT_TOKEN;
+          if (botToken) {
+            fetch('https://slack.com/api/chat.postMessage', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${botToken}`
+              },
+              body: JSON.stringify({
+                channel: channel,
+                text: `❌ Error checking plugin status. Please try again later.`
+              })
+            });
+          }
+        }
+      }
+      else {
         console.log('❌ Text does not contain @blog create or reset command');
       }
     }

@@ -7,6 +7,9 @@
     },
     "api/test.js": {
       "runtime": "@vercel/node"
+    },
+    "api/test-plugin-status.js": {
+      "runtime": "@vercel/node"
     }
   },
   "headers": [

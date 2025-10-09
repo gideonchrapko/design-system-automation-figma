@@ -4,6 +4,12 @@ let isProcessing = false; // Global lock to prevent concurrent processing
 let currentUser = null; // Track who is currently using the system
 let lockStartTime = null; // Track when the lock was set
 
+// Plugin availability tracking
+let pluginLastHeartbeat = null; // Last time plugin sent heartbeat
+let pluginAvailable = false; // Whether plugin is currently available
+let pluginEverHeartbeated = false; // Whether plugin has ever sent a heartbeat
+const PLUGIN_TIMEOUT = 10 * 1000; // 10 seconds timeout for plugin availability
+
 module.exports = (req, res) => {
   // Handle CORS for Figma plugin (which sends origin: null)
   const origin = req.headers.origin;
@@ -29,13 +35,44 @@ module.exports = (req, res) => {
     res.status(200).end();
     return;
   }
-  
+
   if (req.method === 'POST') {
     const newRequest = req.body;
     console.log('📥 Adding new request:', newRequest.blogTitle, 'from user:', newRequest.userId);
     
-    // Check if lock has been held too long (5 minutes)
+    // Check if this is a heartbeat from the plugin
+    if (newRequest.type === 'heartbeat') {
+      pluginLastHeartbeat = Date.now();
+      pluginAvailable = true;
+      pluginEverHeartbeated = true;
+      console.log('💓 Plugin heartbeat received - plugin is available');
+      return res.json({ success: true, message: 'Heartbeat received' });
+    }
+    
+    // Check if plugin is available before processing requests
     const now = Date.now();
+    if (pluginLastHeartbeat && (now - pluginLastHeartbeat) > PLUGIN_TIMEOUT) {
+      pluginAvailable = false;
+      console.log('⚠️ Plugin timeout - plugin is no longer available');
+    }
+    
+    // If plugin has never heartbeated or is timed out, mark as unavailable
+    if (!pluginEverHeartbeated || (pluginLastHeartbeat && (now - pluginLastHeartbeat) > PLUGIN_TIMEOUT)) {
+      pluginAvailable = false;
+    }
+    
+    // If plugin is not available, reject the request
+    if (!pluginAvailable) {
+      console.log('🚫 Plugin not available - rejecting request');
+      return res.status(503).json({ 
+        success: false, 
+        error: 'Figma plugin is not currently open. Please open the plugin in Figma and try again.',
+        pluginAvailable: false,
+        code: 'PLUGIN_UNAVAILABLE'
+      });
+    }
+    
+    // Check if lock has been held too long (5 minutes)
     if (lockStartTime && (now - lockStartTime) > 5 * 60 * 1000) {
       console.log('⏰ Lock timeout - clearing old lock');
       isProcessing = false;
@@ -82,6 +119,46 @@ module.exports = (req, res) => {
   } else if (req.method === 'GET') {
     console.log('📋 GET request for requests');
     console.log('🔒 System status - Processing:', isProcessing, 'Current user:', currentUser);
+    console.log('💓 Plugin status - Available:', pluginAvailable, 'Last heartbeat:', pluginLastHeartbeat ? new Date(pluginLastHeartbeat).toISOString() : 'Never');
+    
+    // Check for status update parameter
+    if (req.query.updateStatus === 'true' && req.query.requestId && req.query.status) {
+      const requestId = req.query.requestId;
+      const newStatus = req.query.status;
+      const message = req.query.message || '';
+      
+      console.log(`🔄 Updating request ${requestId} to status: ${newStatus}`);
+      
+      // Find and update the request
+      const requestIndex = requests.findIndex(r => r.id === requestId);
+      if (requestIndex !== -1) {
+        requests[requestIndex].status = newStatus;
+        if (message) {
+          requests[requestIndex].message = message;
+        }
+        console.log(`✅ Successfully updated request ${requestId} to ${newStatus}`);
+        
+        // If request is completed or errored, clear the lock
+        if (newStatus === 'completed' || newStatus === 'error') {
+          isProcessing = false;
+          currentUser = null;
+          lockStartTime = null;
+          console.log('🔓 Lock cleared - request finished');
+        }
+        
+        return res.json({ 
+          success: true, 
+          message: `Request ${requestId} updated to ${newStatus}`,
+          request: requests[requestIndex]
+        });
+      } else {
+        console.log(`❌ Request ${requestId} not found`);
+        return res.status(404).json({ 
+          success: false, 
+          error: `Request ${requestId} not found` 
+        });
+      }
+    }
     
     // Check for reset parameter
     if (req.query.reset === 'true') {
@@ -90,6 +167,9 @@ module.exports = (req, res) => {
       isProcessing = false;
       currentUser = null;
       lockStartTime = null;
+      pluginAvailable = false;
+      pluginLastHeartbeat = null;
+      pluginEverHeartbeated = false;
       console.log('✅ System reset complete');
       return res.json({ 
         success: true, 
@@ -98,67 +178,22 @@ module.exports = (req, res) => {
       });
     }
     
-    // Check for status update parameter
-    if (req.query.updateStatus && req.query.requestId && req.query.status) {
-      console.log(`🔄 Status update requested: ${req.query.requestId} -> ${req.query.status}`);
-      const request = requests.find(r => r.id === req.query.requestId);
-      if (request) {
-        request.status = req.query.status;
-        console.log('✅ Request status updated successfully');
-      } else {
-        console.log('❌ Request not found for status update');
-      }
+    // Check for plugin status parameter
+    if (req.query.pluginStatus === 'true') {
+      return res.json({
+        success: true,
+        pluginAvailable: pluginAvailable,
+        lastHeartbeat: pluginLastHeartbeat,
+        timeSinceLastHeartbeat: pluginLastHeartbeat ? Date.now() - pluginLastHeartbeat : null
+      });
     }
     
-    // Filter out old requests (older than 5 minutes) and clean up duplicates
-    const now = Date.now();
-    const fiveMinutesAgo = now - (5 * 60 * 1000);
-    
-    // Remove old requests and duplicates
-    const seenTitles = new Set();
-    requests = requests.filter(r => {
-      // Keep only recent requests (less than 5 minutes old)
-      if (r.timestamp < fiveMinutesAgo) {
-        console.log(`🗑️ Removing old request: ${r.blogTitle} (age: ${Math.floor((now - r.timestamp) / 60000)}m)`);
-        return false;
-      }
-      
-      // Keep only the most recent request for each unique title
-      if (seenTitles.has(r.blogTitle)) {
-        console.log(`🗑️ Removing duplicate request: ${r.blogTitle}`);
-        return false;
-      }
-      
-      seenTitles.add(r.blogTitle);
-      return true;
+    // Return requests with plugin status
+    res.json({ 
+      success: true, 
+      requests: requests,
+      pluginAvailable: pluginAvailable,
+      lastHeartbeat: pluginLastHeartbeat
     });
-    
-    console.log(`🧹 Cleaned up requests. Now have ${requests.length} active requests`);
-    
-    // If no pending requests, clear the lock
-    const pendingRequests = requests.filter(r => r.status === 'pending');
-    console.log('📊 Current requests:', requests.map(r => `${r.blogTitle} (${r.status})`));
-    console.log('⏳ Pending requests:', pendingRequests.length);
-    
-    // Remove completed requests that are older than 2 minutes
-    const completedRequests = requests.filter(r => r.status === 'completed' || r.status === 'error');
-    if (completedRequests.length > 0) {
-      const twoMinutesAgo = now - (2 * 60 * 1000);
-      const oldCompleted = completedRequests.filter(r => r.timestamp < twoMinutesAgo);
-      if (oldCompleted.length > 0) {
-        console.log(`🗑️ Removing ${oldCompleted.length} old completed requests`);
-        requests = requests.filter(r => !(r.status === 'completed' || r.status === 'error') || r.timestamp >= twoMinutesAgo);
-      }
-    }
-    
-    if (pendingRequests.length === 0 && isProcessing) {
-      console.log('🔓 Clearing lock - no pending requests');
-      isProcessing = false;
-      currentUser = null;
-      lockStartTime = null;
-    }
-    
-    console.log(`📋 Found ${requests.length} total requests`);
-    res.json({ requests: requests });
   }
 }; 

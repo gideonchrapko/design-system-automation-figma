@@ -50,34 +50,81 @@ module.exports = async (req, res) => {
 
     console.log('🤖 Calling OpenAI with prompt length:', prompt.length);
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature,
-        max_tokens
-      })
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.log('❌ OpenAI error:', response.status, text);
-      return res.status(response.status).json({ error: 'OpenAI error', details: text });
-    }
-
-    const data = await response.json();
-    const content = (data.choices?.[0]?.message?.content ?? '').trim();
+    // Retry logic with exponential backoff for rate limits
+    const maxRetries = 3;
+    let lastError = null;
     
-    console.log('✅ OpenAI response successful, content length:', content.length);
-    return res.json({ content });
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o',
+            messages: [
+              { role: 'system', content: 'You are a helpful assistant.' },
+              { role: 'user', content: prompt }
+            ],
+            temperature,
+            max_tokens
+          })
+        });
+
+        if (response.status === 429) {
+          // Rate limit hit - extract retry time from response
+          const errorData = await response.json();
+          const retryAfter = errorData.error?.retry_after || 1; // Default to 1 second
+          
+          console.log(`⏰ Rate limit hit (attempt ${attempt}/${maxRetries}), retrying in ${retryAfter}s...`);
+          
+          if (attempt < maxRetries) {
+            // Wait for the specified retry time, plus some jitter
+            const jitter = Math.random() * 1000; // 0-1 second random jitter
+            const waitTime = (retryAfter * 1000) + jitter;
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            continue; // Try again
+          } else {
+            // Max retries reached
+            lastError = new Error(`Rate limit exceeded after ${maxRetries} attempts`);
+            break;
+          }
+        }
+
+        if (!response.ok) {
+          const text = await response.text();
+          console.log('❌ OpenAI error:', response.status, text);
+          return res.status(response.status).json({ error: 'OpenAI error', details: text });
+        }
+
+        const data = await response.json();
+        const content = (data.choices?.[0]?.message?.content ?? '').trim();
+        
+        console.log('✅ OpenAI response successful, content length:', content.length);
+        return res.json({ content });
+        
+      } catch (fetchError) {
+        console.log(`❌ Fetch error on attempt ${attempt}:`, fetchError.message);
+        lastError = fetchError;
+        
+        if (attempt < maxRetries) {
+          // Exponential backoff: wait 2^attempt seconds
+          const waitTime = Math.pow(2, attempt) * 1000;
+          console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+    }
+    
+    // If we get here, all retries failed
+    console.log('💥 All retry attempts failed');
+    return res.status(500).json({ 
+      error: 'OpenAI request failed after retries', 
+      details: lastError?.message || 'Unknown error' 
+    });
+    
   } catch (error) {
     console.log('💥 Server error:', error);
     return res.status(500).json({ error: 'Server error', details: String(error) });

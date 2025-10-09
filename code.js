@@ -73,6 +73,60 @@ const AI_RULES = {
 // END CONFIGURABLE RULES
 // ============================================================================
 // ============================================================================
+// PLUGIN AVAILABILITY SYSTEM - Tracks when plugin is open and active
+// ============================================================================
+// Heartbeat interval for plugin availability (5 seconds)
+const HEARTBEAT_INTERVAL = 5000;
+// Function to send heartbeat to server
+function sendHeartbeat() {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            console.log('💓 Sending heartbeat...');
+            const response = yield fetch(`${VERCEL_URL}/api/check-requests`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'heartbeat' }),
+                credentials: 'omit'
+            });
+            if (response.ok) {
+                console.log('💓 Heartbeat sent successfully');
+            }
+            else {
+                console.log('⚠️ Heartbeat failed:', response.status);
+            }
+        }
+        catch (error) {
+            console.log('❌ Error sending heartbeat:', error);
+        }
+    });
+}
+// Start heartbeat system
+function startHeartbeat() {
+    console.log('💓 Starting plugin heartbeat system...');
+    // Send initial heartbeat immediately
+    sendHeartbeat();
+    // Set up interval for regular heartbeats
+    const heartbeatInterval = setInterval(() => {
+        console.log('💓 Interval triggered - sending heartbeat...');
+        sendHeartbeat();
+    }, HEARTBEAT_INTERVAL);
+    console.log('💓 Heartbeat interval set for every', HEARTBEAT_INTERVAL / 1000, 'seconds');
+}
+// Cleanup function to handle plugin closure
+function cleanup() {
+    console.log('🔄 Plugin cleanup - stopping heartbeat system');
+    // The heartbeat will naturally stop when the plugin is closed
+    // The server will detect the timeout after 10 seconds
+}
+// Handle plugin focus/blur events
+function setupFocusHandling() {
+    // In Figma plugin environment, we can't use window/document events
+    // Instead, we rely on the heartbeat system and Figma's plugin lifecycle
+    console.log('📱 Plugin focus handling setup complete');
+    // Figma plugins automatically stop when closed, so the heartbeat will stop
+    // The server will detect the timeout after 10 seconds of no heartbeats
+}
+// ============================================================================
 // USAGE TRACKING SYSTEM - Prevents overuse of specific images
 // ============================================================================
 // In-memory usage tracking (resets when plugin restarts)
@@ -131,7 +185,7 @@ function resetUsageTracking() {
 // ============================================================================
 // END USAGE TRACKING SYSTEM
 // ============================================================================
-// Vercel API URL
+// Configuration
 const VERCEL_URL = 'https://slack-webhook-personal.vercel.app';
 // Component selection rules
 const COMPONENT_RULES = {
@@ -150,32 +204,6 @@ const COMPONENT_RULES = {
 figma.showUI(__html__, { width: 500, height: 600 });
 // Add a local cache to prevent infinite loops
 // No caching - process all requests every time
-// Test CORS functionality
-function testCORS() {
-    return __awaiter(this, void 0, void 0, function* () {
-        try {
-            console.log('🧪 Testing CORS functionality...');
-            const response = yield fetch(`${VERCEL_URL}/api/test-cors`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'omit',
-                body: JSON.stringify({ test: 'data' })
-            });
-            if (response.ok) {
-                const data = yield response.json();
-                console.log('✅ CORS test successful:', data);
-            }
-            else {
-                console.error('❌ CORS test failed:', response.status, response.statusText);
-            }
-        }
-        catch (error) {
-            console.error('❌ CORS test error:', error);
-        }
-    });
-}
-// Test CORS when plugin loads
-testCORS();
 // Get all components from the current document
 function getAllComponents() {
     return __awaiter(this, void 0, void 0, function* () {
@@ -359,7 +387,8 @@ function chunkArray(arr, chunkSize) {
     return chunks;
 }
 function buildPrompt(mainImages, blogTitle, keywords) {
-    return `
+    console.log(`🔍 Building AI prompt with:`, { blogTitle, keywords, imageCount: mainImages.length });
+    const prompt = `
 You are a world-class visual designer for Figma templates.
 Rules:
 - Prioritize image names that contain any of the title or keyword terms, even partially.
@@ -375,6 +404,8 @@ Keywords: "${keywords}"
 
 Respond with the exact name of the most relevant main image from the list above. If none are relevant, pick the closest match. Respond with only the name, nothing else.
 `;
+    console.log(`📝 Generated prompt:`, prompt);
+    return prompt;
 }
 function callOpenAIChat(apiKey_1, prompt_1) {
     return __awaiter(this, arguments, void 0, function* (apiKey, prompt, maxTokens = 50) {
@@ -401,24 +432,49 @@ function callOpenAIChat(apiKey_1, prompt_1) {
             return ((_d = (_c = (_b = (_a = data.choices) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.message) === null || _c === void 0 ? void 0 : _c.content) !== null && _d !== void 0 ? _d : '').trim();
         }
         // No API key available locally: use Vercel proxy that holds the key in env
+        console.log(`🌐 Using Vercel proxy for OpenAI call to: ${VERCEL_URL}/api/openai-chat`);
         const proxyResponse = yield fetch(`${VERCEL_URL}/api/openai-chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'omit',
             body: JSON.stringify({ prompt, max_tokens: maxTokens, temperature: 0.7 })
         });
+        console.log(`🌐 Proxy response status: ${proxyResponse.status} ${proxyResponse.statusText}`);
         if (!proxyResponse.ok) {
             const text = yield proxyResponse.text();
+            console.error(`❌ Proxy error response: ${text}`);
             throw new Error(`OpenAI proxy error: ${proxyResponse.status} ${proxyResponse.statusText} - ${text}`);
         }
         const proxyData = yield proxyResponse.json();
+        console.log(`🌐 Proxy response data:`, proxyData);
+        if (!proxyData.content) {
+            console.error(`❌ Proxy response missing content:`, proxyData);
+            throw new Error('Proxy response missing content field');
+        }
         return ((_e = proxyData.content) !== null && _e !== void 0 ? _e : '').trim();
     });
 }
 function getBestImageFromOpenAI(apiKey, prompt) {
     return __awaiter(this, void 0, void 0, function* () {
-        const content = yield callOpenAIChat(apiKey, prompt, 50);
-        return content.trim().split('\n')[0].replace(/^Best main image:\s*/i, '').trim();
+        try {
+            console.log(`🤖 Calling OpenAI with prompt length: ${prompt.length}`);
+            const content = yield callOpenAIChat(apiKey, prompt, 50);
+            console.log(`🤖 OpenAI response: "${content}"`);
+            if (!content || content.trim() === '') {
+                throw new Error('OpenAI returned empty response');
+            }
+            const result = content.trim().split('\n')[0].replace(/^Best main image:\s*/i, '').trim();
+            console.log(`🤖 Extracted result: "${result}"`);
+            if (!result || result === '') {
+                throw new Error('Failed to extract valid result from OpenAI response');
+            }
+            return result;
+        }
+        catch (error) {
+            console.error(`❌ Error in getBestImageFromOpenAI:`, error);
+            console.error(`❌ Prompt was: "${prompt}"`);
+            throw error;
+        }
     });
 }
 function pickBestMainImage(apiKey_1, mainImages_1, blogTitle_1, keywords_1) {
@@ -878,7 +934,7 @@ function createTemplate(selection, components) {
             figma.currentPage.selection = [frame];
             figma.viewport.scrollAndZoomIntoView([frame]);
             // Export the template as PNG and return the bytes
-            const pngBytes = yield frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 2 } });
+            const pngBytes = yield frame.exportAsync({ format: 'PNG', constraint: { type: 'WIDTH', value: 1500 } });
             return pngBytes;
         }
         catch (error) {
@@ -993,6 +1049,8 @@ function uint8ToBase64(bytes) {
     }
     return result;
 }
+// Global state for tracking processed requests to prevent duplicates
+const processedRequestIds = new Set();
 function checkForSlackRequests() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
@@ -1041,11 +1099,34 @@ function checkForSlackRequests() {
                     console.log(`  - ${r.blogTitle} (ID: ${r.id}, Age: ${ageMinutes}m)`);
                 });
             }
-            // Process each pending request individually
+            // Process each pending request individually, but skip if already processed
             for (const request of pending) {
+                // Check if we've already processed this request
+                if (processedRequestIds.has(request.id)) {
+                    console.log(`⏭️ Skipping already processed request: ${request.blogTitle} (ID: ${request.id})`);
+                    continue;
+                }
                 console.log(`🚀 Processing request: ${request.blogTitle} (ID: ${request.id})`);
-                yield processSlackRequest(request);
-                console.log(`✅ Finished processing request: ${request.id}`);
+                // Mark as processed before starting to prevent race conditions
+                processedRequestIds.add(request.id);
+                try {
+                    yield processSlackRequest(request);
+                    console.log(`✅ Finished processing request: ${request.id}`);
+                }
+                catch (error) {
+                    console.error(`❌ Error processing request ${request.id}:`, error);
+                    // Remove from processed set on error so it can be retried
+                    processedRequestIds.delete(request.id);
+                }
+            }
+            // Clean up old processed IDs (older than 10 minutes) to prevent memory leaks
+            const tenMinutesAgo = now - (10 * 60 * 1000);
+            for (const requestId of processedRequestIds) {
+                const request = requests.find(r => r.id === requestId);
+                if (request && request.timestamp < tenMinutesAgo) {
+                    processedRequestIds.delete(requestId);
+                    console.log(`🧹 Cleaned up old processed request ID: ${requestId}`);
+                }
             }
         }
         catch (error) {
@@ -1058,6 +1139,8 @@ function processSlackRequest(request) {
         try {
             console.log(`🎨 Processing request for: "${request.blogTitle}"`);
             console.log(`📤 Will send response to channel: ${request.channelId}`);
+            console.log(`🆔 Request ID: ${request.id}`);
+            console.log(`📊 Request details:`, JSON.stringify(request, null, 2));
             // Create all templates directly (no selection needed)
             yield createAllTemplates(request);
         }
@@ -1066,6 +1149,7 @@ function processSlackRequest(request) {
             const message = error instanceof Error ? error.message :
                 (typeof error === 'object' && error !== null) ? JSON.stringify(error) :
                     String(error);
+            console.error(`❌ Sending error to Slack: ${message}`);
             yield sendSlackError(request, message);
         }
     });
@@ -1092,8 +1176,19 @@ function createAllTemplates(request) {
                 yield sendSlackError(request, 'No main images found in Figma file');
                 return;
             }
-            // Get top picks
-            const topPicks = yield getTopPickFromEveryChunk(null, mainImages, request.blogTitle, '');
+            // Get top picks - use blog title as keywords if none provided
+            const keywords = request.blogTitle; // Use blog title as keywords for better AI selection
+            console.log(`🔍 AI Selection - Blog Title: "${request.blogTitle}", Keywords: "${keywords}"`);
+            let topPicks;
+            try {
+                topPicks = yield getTopPickFromEveryChunk(null, mainImages, request.blogTitle, keywords);
+                console.log(`🎯 Successfully got top picks:`, topPicks.map(p => p.name));
+            }
+            catch (error) {
+                console.error(`❌ Error getting top picks:`, error);
+                yield sendSlackError(request, `Failed to select images: ${error instanceof Error ? error.message : String(error)}`);
+                return;
+            }
             console.log(`🎯 Creating templates for top picks:`, topPicks.map(p => p.name));
             // Log current usage statistics
             logUsageStatistics();
@@ -1102,6 +1197,11 @@ function createAllTemplates(request) {
             for (let i = 0; i < topPicks.length; i++) {
                 const selectedPick = topPicks[i];
                 console.log(`🎨 Creating template ${i + 1}/5 with: ${selectedPick.name}`);
+                // Add delay between AI calls to reduce rate limiting (except for first iteration)
+                if (i > 0) {
+                    console.log(`⏳ Adding 2 second delay between AI calls to reduce rate limiting...`);
+                    yield delay(2000);
+                }
                 // Get allowed backgrounds for this main image
                 const allowedBackgrounds = getAllowedBackgroundsForMain(selectedPick.name);
                 // Get all available background components
@@ -1141,7 +1241,22 @@ function createAllTemplates(request) {
                     reasoning: `Selected ${selectedPick.name} as main image with ${background} background`
                 };
                 // Let AI select supporting images
-                const aiSelection = yield selectComponentsWithAI(null, request.blogTitle, '', components);
+                let aiSelection;
+                try {
+                    aiSelection = yield selectComponentsWithAI(null, request.blogTitle, keywords, components);
+                    console.log(`🤖 AI selection successful for template ${i + 1}`);
+                }
+                catch (error) {
+                    console.error(`❌ Error in AI selection for template ${i + 1}:`, error);
+                    // Use a fallback selection
+                    aiSelection = {
+                        background: background,
+                        mainImage: selectedPick.name,
+                        supportingImages: [],
+                        layout: 'standard',
+                        reasoning: `Fallback selection due to AI error: ${error instanceof Error ? error.message : String(error)}`
+                    };
+                }
                 // Override main image with our selection
                 aiSelection.mainImage = selectedPick.name;
                 aiSelection.background = background;
@@ -1221,22 +1336,7 @@ function sendSlackMessage(channelId, message) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             console.log(`📤 Sending message to channel ${channelId}: ${message}`);
-            // First test the new endpoint
-            console.log('🧪 Testing new endpoint...');
-            const testResponse = yield fetch(`${VERCEL_URL}/api/test-slack-message`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'omit',
-                body: JSON.stringify({ test: 'data' })
-            });
-            if (testResponse.ok) {
-                const testData = yield testResponse.json();
-                console.log('✅ Test endpoint working:', testData);
-            }
-            else {
-                console.error('❌ Test endpoint failed:', testResponse.status, testResponse.statusText);
-            }
-            // Now try the actual slack-messages endpoint
+            // Send message directly to slack-messages endpoint
             const response = yield fetch(`${VERCEL_URL}/api/slack-messages`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1306,8 +1406,16 @@ function uploadImageForDownload(imageData, blogTitle) {
         }
     });
 }
+// Utility function to add delays between API calls
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 // Start polling when plugin loads
 console.log('🚀 Plugin loaded, starting Slack request polling...');
 setInterval(checkForSlackRequests, 5000);
 // Also check immediately
 checkForSlackRequests();
+// Start heartbeat system
+startHeartbeat();
+// Setup focus handling
+setupFocusHandling();
