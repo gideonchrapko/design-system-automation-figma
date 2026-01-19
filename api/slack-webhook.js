@@ -18,10 +18,19 @@ module.exports = async (req, res) => {
     
     // Only process app mentions and messages
     if (event.type === 'app_mention' || event.type === 'message') {
-      const { text, user, channel } = event;
+      const { text, user, channel, channel_type } = event;
       
       console.log('Processing event:', event.type);
       console.log('Text received:', text);
+      console.log('Channel:', channel);
+      console.log('Channel type:', channel_type || 'unknown');
+      console.log('User:', user);
+      
+      // Skip bot messages to avoid loops
+      if (event.subtype === 'bot_message' || event.bot_id) {
+        console.log('⏭️ Skipping bot message');
+        return res.json({ message: 'OK' });
+      }
       
       // Process @blog create commands with both single and double quotes
       if (text && text.includes('@blog create')) {
@@ -62,7 +71,7 @@ module.exports = async (req, res) => {
           const botToken = process.env.SLACK_BOT_TOKEN;
           if (botToken) {
             try {
-              await fetch('https://slack.com/api/chat.postMessage', {
+              const response = await fetch('https://slack.com/api/chat.postMessage', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -73,7 +82,17 @@ module.exports = async (req, res) => {
                   text: `🎨 Processing your request for "${blogTitle}"...\n\n⏳ This may take a minute while I generate multiple template variations for you.`
                 })
               });
-              console.log('✅ Immediate response sent to user');
+              const responseData = await response.json();
+              if (responseData.ok) {
+                console.log('✅ Immediate response sent to user');
+              } else {
+                console.log('❌ Failed to send immediate response:', responseData.error);
+                console.log('❌ Full response:', JSON.stringify(responseData, null, 2));
+                // If it's a channel_not_found or not_in_channel error, log it clearly
+                if (responseData.error === 'channel_not_found' || responseData.error === 'not_in_channel') {
+                  console.log('⚠️ Bot is not in this channel or channel not found. Please invite the bot to the channel.');
+                }
+              }
             } catch (error) {
               console.log('❌ Failed to send immediate response:', error);
             }
@@ -98,26 +117,6 @@ module.exports = async (req, res) => {
             
             if (response.ok) {
               console.log('✅ Added request via API:', request);
-            } else if (response.status === 423) {
-              // System is busy
-              const errorData = await response.json();
-              console.log('🚫 System busy:', errorData.error);
-              
-              // Send busy message to Slack
-              const botToken = process.env.SLACK_BOT_TOKEN;
-              if (botToken) {
-                fetch('https://slack.com/api/chat.postMessage', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${botToken}`
-                  },
-                  body: JSON.stringify({
-                    channel: channel,
-                    text: `🚫 ${errorData.error}\n\nPlease wait a moment and try again.`
-                  })
-                });
-              }
             } else if (response.status === 503) {
               // Plugin unavailable
               const errorData = await response.json();
@@ -266,8 +265,19 @@ module.exports = async (req, res) => {
       }
       else {
         console.log('❌ Text does not contain @blog create or reset command');
+        console.log('📝 Full text received:', text);
+        // Log if it's a message event but not matching our patterns
+        if (event.type === 'message' && text) {
+          console.log('ℹ️ Received message event but text does not match expected patterns');
+        }
       }
+    } else {
+      console.log('⚠️ Event type not app_mention or message:', event.type);
+      console.log('📋 Full event:', JSON.stringify(event, null, 2));
     }
+  } else {
+    console.log('⚠️ No event in request body');
+    console.log('📋 Full request body:', JSON.stringify(req.body, null, 2));
   }
   
   res.json({ message: 'OK' });

@@ -74,7 +74,17 @@ module.exports = async (req, res) => {
           res.json({ success: true, message: 'Message sent to Slack' });
         } else {
           console.log('❌ Failed to send message to Slack:', data.error);
-          res.status(500).json({ success: false, error: data.error });
+          console.log('❌ Full error response:', JSON.stringify(data, null, 2));
+          // Provide helpful error messages
+          let errorMessage = data.error;
+          if (data.error === 'channel_not_found') {
+            errorMessage = 'Channel not found. Make sure the bot is invited to the channel.';
+          } else if (data.error === 'not_in_channel') {
+            errorMessage = 'Bot is not in this channel. Please invite the bot to the private channel.';
+          } else if (data.error === 'missing_scope') {
+            errorMessage = 'Bot is missing required permissions. Check Slack app permissions.';
+          }
+          res.status(500).json({ success: false, error: errorMessage, details: data });
         }
       } catch (error) {
         console.log('❌ Error sending message to Slack:', error);

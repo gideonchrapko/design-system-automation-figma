@@ -538,24 +538,28 @@ function getTopMainImagePicksWithThumbnails(apiKey_1, mainImages_1, blogTitle_1,
         return picksWithThumbnails;
     });
 }
-// New function to get the top pick from every single chunk
+// New function to get the top pick from every single chunk with improved variety (optimized for speed)
 function getTopPickFromEveryChunk(apiKey_1, mainImages_1, blogTitle_1, keywords_1) {
-    return __awaiter(this, arguments, void 0, function* (apiKey, mainImages, blogTitle, keywords, chunkSize = 25) {
-        const chunks = chunkArray(mainImages, chunkSize);
+    return __awaiter(this, arguments, void 0, function* (apiKey, mainImages, blogTitle, keywords, chunkSize = 25, maxPicks = 5) {
+        // Shuffle images before chunking to add randomness
+        const shuffledImages = [...mainImages].sort(() => Math.random() - 0.5);
+        const chunks = chunkArray(shuffledImages, chunkSize);
         const chunkTopPicks = [];
         console.log(`🔍 Processing ${chunks.length} chunks with ${chunkSize} images each...`);
+        // Get 1 pick from each chunk (fast - only 1 AI call per chunk)
         for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
             const chunk = chunks[chunkIndex];
             console.log(`\n📦 Chunk ${chunkIndex + 1}/${chunks.length} - ${chunk.length} images:`);
-            // Get the top pick from this chunk
+            // Get the top pick from this chunk (single AI call)
             const prompt = buildPrompt(chunk, blogTitle, keywords);
             const winnerName = yield getBestImageFromOpenAI(apiKey, prompt);
             const winner = chunk.find(m => m.name === winnerName);
             if (winner) {
                 console.log(`  🏆 Top pick from chunk ${chunkIndex + 1}: ${winner.name}`);
-                // Add variety: sometimes use a different relevant image from the same chunk
+                // Add variety: 60% chance to use a different relevant image from the same chunk
                 let finalWinner = winner;
-                if (chunk.length > 1 && Math.random() < 0.6) { // 60% chance for variety
+                if (chunk.length > 1 && Math.random() < 0.6) {
+                    // Find relevant alternatives (no AI call needed - just filter)
                     const relevantImages = chunk.filter(img => {
                         const imgName = img.name.toLowerCase();
                         const titleWords = blogTitle.toLowerCase().split(/\W+/).filter(w => w.length > 2);
@@ -568,39 +572,75 @@ function getTopPickFromEveryChunk(apiKey_1, mainImages_1, blogTitle_1, keywords_
                         const otherRelevant = relevantImages.filter(img => img.name !== winner.name);
                         if (otherRelevant.length > 0) {
                             // Get the least used relevant image for better variety
-                            const leastUsedRelevant = getLeastUsedImages(otherRelevant, 1);
-                            if (leastUsedRelevant.length > 0) {
-                                finalWinner = leastUsedRelevant[0];
+                            const sortedByUsage = [...otherRelevant].sort((a, b) => {
+                                const usageA = getImageUsageCount(a.name);
+                                const usageB = getImageUsageCount(b.name);
+                                // Add some randomness: 40% chance to ignore usage
+                                if (Math.random() < 0.4) {
+                                    return Math.random() - 0.5;
+                                }
+                                return usageA - usageB;
+                            });
+                            // Pick from top 3 least used (or all if less than 3)
+                            const candidates = sortedByUsage.slice(0, Math.min(3, sortedByUsage.length));
+                            if (candidates.length > 0) {
+                                finalWinner = candidates[Math.floor(Math.random() * candidates.length)];
                                 const winnerUsage = getImageUsageCount(winner.name);
                                 const finalWinnerUsage = getImageUsageCount(finalWinner.name);
-                                console.log(`  🎲 Variety mode: Using ${finalWinner.name} (usage: ${finalWinnerUsage}) instead of ${winner.name} (usage: ${winnerUsage})`);
-                            }
-                            else {
-                                // Fallback to random selection if usage tracking fails
-                                const randomIndex = Math.floor(Math.random() * otherRelevant.length);
-                                finalWinner = otherRelevant[randomIndex];
-                                console.log(`  🎲 Variety mode: Using ${finalWinner.name} instead of ${winner.name} (random fallback)`);
+                                console.log(`  🎲 Variety: Using ${finalWinner.name} (usage: ${finalWinnerUsage}) instead of ${winner.name} (usage: ${winnerUsage})`);
                             }
                         }
                     }
                 }
-                // Export thumbnail for this pick (100px width)
-                const bytes = yield finalWinner.node.exportAsync({ format: 'PNG', constraint: { type: 'WIDTH', value: 100 } });
-                const base64 = uint8ToBase64(bytes);
-                // Track usage of this image
-                incrementImageUsage(finalWinner.name);
-                chunkTopPicks.push({
-                    name: finalWinner.name,
-                    thumbnail: `data:image/png;base64,${base64}`,
-                    chunkNumber: chunkIndex + 1
-                });
+                chunkTopPicks.push(finalWinner);
             }
             else {
                 console.log(`  ❌ No valid pick found for chunk ${chunkIndex + 1}`);
             }
         }
-        console.log(`\n🎯 Top picks from all ${chunkTopPicks.length} chunks: ${chunkTopPicks.map(p => `Chunk ${p.chunkNumber}: ${p.name}`).join(', ')}`);
-        return chunkTopPicks;
+        // Remove duplicates by name
+        const uniquePicks = [];
+        const seenNames = new Set();
+        for (const pick of chunkTopPicks) {
+            if (!seenNames.has(pick.name)) {
+                uniquePicks.push(pick);
+                seenNames.add(pick.name);
+            }
+        }
+        // Sort by usage count (least used first) to prioritize variety, with randomness
+        uniquePicks.sort((a, b) => {
+            const usageA = getImageUsageCount(a.name);
+            const usageB = getImageUsageCount(b.name);
+            // Add randomness: 30% chance to ignore usage for more variety
+            if (Math.random() < 0.3) {
+                return Math.random() - 0.5;
+            }
+            return usageA - usageB;
+        });
+        // Take top maxPicks (default 5)
+        let finalPicks = uniquePicks.slice(0, maxPicks);
+        // If we don't have enough unique picks, fill with random unused images
+        if (finalPicks.length < maxPicks) {
+            const usedNames = new Set(finalPicks.map(p => p.name));
+            const unusedImages = mainImages.filter(img => !usedNames.has(img.name));
+            const shuffledUnused = [...unusedImages].sort(() => Math.random() - 0.5);
+            const needed = maxPicks - finalPicks.length;
+            finalPicks.push(...shuffledUnused.slice(0, needed));
+        }
+        console.log(`\n🎯 Selected ${finalPicks.length} diverse picks: ${finalPicks.map(p => p.name).join(', ')}`);
+        // Export thumbnails and track usage
+        const picksWithThumbnails = yield Promise.all(finalPicks.map((pick, index) => __awaiter(this, void 0, void 0, function* () {
+            const bytes = yield pick.node.exportAsync({ format: 'PNG', constraint: { type: 'WIDTH', value: 100 } });
+            const base64 = uint8ToBase64(bytes);
+            // Track usage
+            incrementImageUsage(pick.name);
+            return {
+                name: pick.name,
+                thumbnail: `data:image/png;base64,${base64}`,
+                chunkNumber: Math.floor(index / 2) + 1
+            };
+        })));
+        return picksWithThumbnails;
     });
 }
 // Call OpenAI API to select main image only
@@ -960,14 +1000,37 @@ figma.ui.onmessage = (msg) => __awaiter(void 0, void 0, void 0, function* () {
             }
             // Get main images
             const mainImages = components.filter(c => c.type === 'main');
+            if (mainImages.length === 0) {
+                figma.ui.postMessage({
+                    type: 'error',
+                    message: 'No main images found in the document. Please add some main image components first.'
+                });
+                return;
+            }
             // Get top pick from every single chunk
             const topPicks = yield getTopPickFromEveryChunk(apiKey, mainImages, blogTitle, keywords, 25);
-            // Send top picks to UI for user selection
+            if (topPicks.length === 0) {
+                figma.ui.postMessage({
+                    type: 'error',
+                    message: 'No suitable images found. Please try different keywords or check your components.'
+                });
+                return;
+            }
+            // Auto-select the first pick and generate template directly
+            const selectedMainImage = topPicks[0].name;
+            console.log('🎯 Auto-selecting first pick:', selectedMainImage);
+            // Select components using AI, but override main image
+            const selection = yield selectComponentsWithAI(apiKey, blogTitle, keywords, components);
+            selection.mainImage = selectedMainImage;
+            // Create the template and export as PNG
+            const pngBytes = yield createTemplate(selection, components);
             figma.ui.postMessage({
-                type: 'main-image-picks',
-                picks: topPicks,
+                type: 'exported-image',
+                bytes: Array.from(pngBytes),
                 blogTitle,
-                keywords
+                background: selection.background,
+                mainImage: selection.mainImage,
+                supportingImages: selection.supportingImages
             });
         }
         catch (error) {

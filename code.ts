@@ -113,12 +113,6 @@ function startHeartbeat() {
   console.log('💓 Heartbeat interval set for every', HEARTBEAT_INTERVAL / 1000, 'seconds');
 }
 
-// Cleanup function to handle plugin closure
-function cleanup() {
-  console.log('🔄 Plugin cleanup - stopping heartbeat system');
-  // The heartbeat will naturally stop when the plugin is closed
-  // The server will detect the timeout after 10 seconds
-}
 
 // Handle plugin focus/blur events
 function setupFocusHandling() {
@@ -154,26 +148,9 @@ function incrementImageUsage(imageName: string): void {
   }
 }
 
-// Function to get least used images from a list
-function getLeastUsedImages(images: ComponentInfo[], maxCount: number = 3): ComponentInfo[] {
-  // Sort by usage count (ascending) and take the least used
-  const sortedByUsage = [...images].sort((a, b) => {
-    const usageA = getImageUsageCount(a.name);
-    const usageB = getImageUsageCount(b.name);
-    return usageA - usageB;
-  });
-  
-  return sortedByUsage.slice(0, maxCount);
-}
-
-// Function to get usage statistics
-function getUsageStatistics(): { [imageName: string]: number } {
-  return { ...imageUsageTracker };
-}
-
 // Function to log current usage statistics
 function logUsageStatistics(): void {
-  const stats = getUsageStatistics();
+  const stats = { ...imageUsageTracker };
   const sortedStats: [string, number][] = [];
   
   for (const imageName of Object.keys(stats)) {
@@ -192,11 +169,6 @@ function logUsageStatistics(): void {
   }
 }
 
-// Function to reset usage tracking (useful for testing or when plugin restarts)
-function resetUsageTracking(): void {
-  Object.keys(imageUsageTracker).forEach(key => delete imageUsageTracker[key]);
-  console.log(`🔄 Usage tracking reset - all counts cleared`);
-}
 
 // ============================================================================
 // END USAGE TRACKING SYSTEM
@@ -221,33 +193,8 @@ interface TemplateSelection {
   reasoning: string;
 }
 
-interface GeneratedTemplate {
-  blogTitle: string;
-  background: string;
-  mainImage: string;
-  supportingImages: string[];
-  downloadUrl?: string;
-}
-
-// Component selection rules
-const COMPONENT_RULES = {
-  backgrounds: {
-    'bg-one': { maxSupporting: 1, position: 'bottom-left' },
-    'bg-two': { maxSupporting: 1, position: 'bottom-left, top-right' },
-    'bg-three': { maxSupporting: 2, position: 'bottom-left, top-right, center' }
-  },
-  mainImageRules: {
-    'tech-article': ['bg-one', 'bg-two'],
-    'lifestyle-article': ['bg-two', 'bg-three'],
-    'business-article': ['bg-one', 'bg-three'],
-    'creative-article': ['bg-two', 'bg-three']
-  }
-};
 
 figma.showUI(__html__, { width: 500, height: 600 });
-
-// Add a local cache to prevent infinite loops
-// No caching - process all requests every time
 
 // Get all components from the current document
 async function getAllComponents(): Promise<ComponentInfo[]> {
@@ -324,22 +271,6 @@ function categorizeComponent(component: ComponentNode): ComponentInfo | null {
   return null;
 }
 
-// Helper function to find matching logo for company name
-function findMatchingLogo(companyName: string, components: ComponentInfo[]): string | null {
-  const normalizedCompanyName = companyName.toLowerCase().replace(/[^a-z0-9]/g, '');
-  
-  // Look for logo components that match the company name
-  const logoComponents = components.filter(c => c.type === 'main' && c.name.startsWith('main-logo-'));
-  
-  for (const logo of logoComponents) {
-    const logoName = logo.name.toLowerCase().replace('main-logo-', '').replace(/[^a-z0-9]/g, '');
-    if (logoName.includes(normalizedCompanyName) || normalizedCompanyName.includes(logoName)) {
-      return logo.name;
-    }
-  }
-  
-  return null;
-}
 
 // Get positioning for supporting images based on background type
 function getPositionsForBackground(bgType: string): { x: number, y: number, customSize?: {width:number, height:number} }[] {
@@ -428,27 +359,9 @@ function getAllowedBackgroundsForMain(mainName: string): string[] {
   if (mainName.startsWith('main-logo')) {
     return AI_RULES.mainImageRules['main-logo'];
   }
-  // ...other rules as needed
   return [];
 }
 
-// Function to get relevant main images based on blog title and keywords
-function getRelevantMainImages(blogTitle: string, keywords: string, mainImages: any[]) {
-    const allWords = (blogTitle + ' ' + keywords)
-        .toLowerCase()
-        .split(/\W+/)
-        .filter(w => w.length > 2); // ignore very short words
-
-    // Score each main image by number of keyword matches
-    return mainImages
-        .map(img => {
-            const name = img.name.toLowerCase();
-            const matchCount = allWords.filter(word => name.includes(word)).length;
-            return { ...img, matchCount };
-        })
-        .filter(img => img.matchCount > 0)
-        .sort((a, b) => b.matchCount - a.matchCount); // most matches first
-}
 
 function chunkArray<T>(arr: T[], chunkSize: number): T[][] {
   const chunks: T[][] = [];
@@ -555,106 +468,28 @@ async function getBestImageFromOpenAI(apiKey: string | null, prompt: string): Pr
   }
 }
 
-async function pickBestMainImage(
-  apiKey: string,
-  mainImages: { name: string }[],
-  blogTitle: string,
-  keywords: string,
-  chunkSize = 25
-): Promise<string> {
-  // 1. Chunk the main images
-  const chunks = chunkArray(mainImages, chunkSize);
-
-  // 2. Get the best from each chunk
-  const chunkWinners: { name: string }[] = [];
-  for (const chunk of chunks) {
-    const prompt = buildPrompt(chunk, blogTitle, keywords);
-    const winnerName = await getBestImageFromOpenAI(apiKey, prompt);
-    const winner = chunk.find(m => m.name === winnerName);
-    if (winner) chunkWinners.push(winner);
-  }
-
-  // 3. Final round with the chunk winners
-  if (chunkWinners.length === 1) return chunkWinners[0].name;
-  const finalPrompt = buildPrompt(chunkWinners, blogTitle, keywords);
-  return await getBestImageFromOpenAI(apiKey, finalPrompt);
-}
-
-// Add a new function to get top picks from each chunk, limited to 3, and export thumbnails
-async function getTopMainImagePicksWithThumbnails(
-  apiKey: string | null,
-  mainImages: ComponentInfo[],
-  blogTitle: string,
-  keywords: string,
-  chunkSize = 25,
-  maxPicks = 3
-): Promise<{ name: string, thumbnail: string }[]> {
-  const chunks = chunkArray(mainImages, chunkSize);
-  const allChunkPicks: ComponentInfo[] = [];
-  
-  console.log(`🔍 Processing ${chunks.length} chunks with ${chunkSize} images each...`);
-  
-  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-    const chunk = chunks[chunkIndex];
-    console.log(`\n📦 Chunk ${chunkIndex + 1}/${chunks.length} - ${chunk.length} images:`);
-    
-    // Get top 3 picks from this chunk
-    const chunkPicks: ComponentInfo[] = [];
-    const chunkCopy = [...chunk]; // Create a copy to avoid modifying original
-    
-    for (let pickIndex = 0; pickIndex < Math.min(3, chunk.length); pickIndex++) {
-      const prompt = buildPrompt(chunkCopy, blogTitle, keywords);
-      const winnerName = await getBestImageFromOpenAI(apiKey, prompt);
-      const winner = chunkCopy.find(m => m.name === winnerName);
-      
-      if (winner) {
-        chunkPicks.push(winner);
-        console.log(`  🏆 Pick ${pickIndex + 1}: ${winner.name}`);
-        
-        // Remove the winner from the copy so it doesn't get picked again
-        const winnerIndex = chunkCopy.findIndex(m => m.name === winnerName);
-        if (winnerIndex > -1) {
-          chunkCopy.splice(winnerIndex, 1);
-        }
-      }
-    }
-    
-    console.log(`  ✅ Chunk ${chunkIndex + 1} top picks: ${chunkPicks.map(p => p.name).join(', ')}`);
-    allChunkPicks.push(...chunkPicks);
-  }
-  
-  // Take only the first maxPicks from all chunk picks
-  const finalPicks = allChunkPicks.slice(0, maxPicks);
-  console.log(`\n🎯 Final top ${finalPicks.length} picks across all chunks: ${finalPicks.map(p => p.name).join(', ')}`);
-  
-  // Export thumbnails for each pick (100px width)
-  const picksWithThumbnails = await Promise.all(finalPicks.map(async (pick) => {
-    const bytes = await pick.node.exportAsync({ format: 'PNG', constraint: { type: 'WIDTH', value: 100 } });
-    const base64 = uint8ToBase64(bytes);
-    return { name: pick.name, thumbnail: `data:image/png;base64,${base64}` };
-  }));
-  
-  return picksWithThumbnails;
-}
-
-// New function to get the top pick from every single chunk
+// Function to get the top pick from every single chunk with improved variety (optimized for speed)
 async function getTopPickFromEveryChunk(
   apiKey: string | null,
   mainImages: ComponentInfo[],
   blogTitle: string,
   keywords: string,
-  chunkSize = 25
+  chunkSize = 25,
+  maxPicks = 5
 ): Promise<{ name: string, thumbnail: string, chunkNumber: number }[]> {
-  const chunks = chunkArray(mainImages, chunkSize);
-  const chunkTopPicks: { name: string, thumbnail: string, chunkNumber: number }[] = [];
+  // Shuffle images before chunking to add randomness
+  const shuffledImages = [...mainImages].sort(() => Math.random() - 0.5);
+  const chunks = chunkArray(shuffledImages, chunkSize);
+  const chunkTopPicks: ComponentInfo[] = [];
   
   console.log(`🔍 Processing ${chunks.length} chunks with ${chunkSize} images each...`);
   
+  // Get 1 pick from each chunk (fast - only 1 AI call per chunk)
   for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
     const chunk = chunks[chunkIndex];
     console.log(`\n📦 Chunk ${chunkIndex + 1}/${chunks.length} - ${chunk.length} images:`);
     
-    // Get the top pick from this chunk
+    // Get the top pick from this chunk (single AI call)
     const prompt = buildPrompt(chunk, blogTitle, keywords);
     const winnerName = await getBestImageFromOpenAI(apiKey, prompt);
     const winner = chunk.find(m => m.name === winnerName);
@@ -662,9 +497,10 @@ async function getTopPickFromEveryChunk(
     if (winner) {
       console.log(`  🏆 Top pick from chunk ${chunkIndex + 1}: ${winner.name}`);
       
-      // Add variety: sometimes use a different relevant image from the same chunk
+      // Add variety: 60% chance to use a different relevant image from the same chunk
       let finalWinner = winner;
-      if (chunk.length > 1 && Math.random() < 0.6) { // 60% chance for variety
+      if (chunk.length > 1 && Math.random() < 0.6) {
+        // Find relevant alternatives (no AI call needed - just filter)
         const relevantImages = chunk.filter(img => {
           const imgName = img.name.toLowerCase();
           const titleWords = blogTitle.toLowerCase().split(/\W+/).filter(w => w.length > 2);
@@ -678,42 +514,83 @@ async function getTopPickFromEveryChunk(
           const otherRelevant = relevantImages.filter(img => img.name !== winner.name);
           if (otherRelevant.length > 0) {
             // Get the least used relevant image for better variety
-            const leastUsedRelevant = getLeastUsedImages(otherRelevant, 1);
-            if (leastUsedRelevant.length > 0) {
-              finalWinner = leastUsedRelevant[0];
+            const sortedByUsage = [...otherRelevant].sort((a, b) => {
+              const usageA = getImageUsageCount(a.name);
+              const usageB = getImageUsageCount(b.name);
+              // Add some randomness: 40% chance to ignore usage
+              if (Math.random() < 0.4) {
+                return Math.random() - 0.5;
+              }
+              return usageA - usageB;
+            });
+            
+            // Pick from top 3 least used (or all if less than 3)
+            const candidates = sortedByUsage.slice(0, Math.min(3, sortedByUsage.length));
+            if (candidates.length > 0) {
+              finalWinner = candidates[Math.floor(Math.random() * candidates.length)];
               const winnerUsage = getImageUsageCount(winner.name);
               const finalWinnerUsage = getImageUsageCount(finalWinner.name);
-              console.log(`  🎲 Variety mode: Using ${finalWinner.name} (usage: ${finalWinnerUsage}) instead of ${winner.name} (usage: ${winnerUsage})`);
-            } else {
-              // Fallback to random selection if usage tracking fails
-              const randomIndex = Math.floor(Math.random() * otherRelevant.length);
-              finalWinner = otherRelevant[randomIndex];
-              console.log(`  🎲 Variety mode: Using ${finalWinner.name} instead of ${winner.name} (random fallback)`);
+              console.log(`  🎲 Variety: Using ${finalWinner.name} (usage: ${finalWinnerUsage}) instead of ${winner.name} (usage: ${winnerUsage})`);
             }
           }
         }
       }
       
-      // Export thumbnail for this pick (100px width)
-      const bytes = await finalWinner.node.exportAsync({ format: 'PNG', constraint: { type: 'WIDTH', value: 100 } });
-      const base64 = uint8ToBase64(bytes);
-      
-      // Track usage of this image
-      incrementImageUsage(finalWinner.name);
-      
-      chunkTopPicks.push({
-        name: finalWinner.name,
-        thumbnail: `data:image/png;base64,${base64}`,
-        chunkNumber: chunkIndex + 1
-      });
+      chunkTopPicks.push(finalWinner);
     } else {
       console.log(`  ❌ No valid pick found for chunk ${chunkIndex + 1}`);
     }
   }
   
-  console.log(`\n🎯 Top picks from all ${chunkTopPicks.length} chunks: ${chunkTopPicks.map(p => `Chunk ${p.chunkNumber}: ${p.name}`).join(', ')}`);
+  // Remove duplicates by name
+  const uniquePicks: ComponentInfo[] = [];
+  const seenNames = new Set<string>();
+  for (const pick of chunkTopPicks) {
+    if (!seenNames.has(pick.name)) {
+      uniquePicks.push(pick);
+      seenNames.add(pick.name);
+    }
+  }
   
-  return chunkTopPicks;
+  // Sort by usage count (least used first) to prioritize variety, with randomness
+  uniquePicks.sort((a, b) => {
+    const usageA = getImageUsageCount(a.name);
+    const usageB = getImageUsageCount(b.name);
+    // Add randomness: 30% chance to ignore usage for more variety
+    if (Math.random() < 0.3) {
+      return Math.random() - 0.5;
+    }
+    return usageA - usageB;
+  });
+  
+  // Take top maxPicks (default 5)
+  let finalPicks = uniquePicks.slice(0, maxPicks);
+  
+  // If we don't have enough unique picks, fill with random unused images
+  if (finalPicks.length < maxPicks) {
+    const usedNames = new Set(finalPicks.map(p => p.name));
+    const unusedImages = mainImages.filter(img => !usedNames.has(img.name));
+    const shuffledUnused = [...unusedImages].sort(() => Math.random() - 0.5);
+    const needed = maxPicks - finalPicks.length;
+    finalPicks.push(...shuffledUnused.slice(0, needed));
+  }
+  
+  console.log(`\n🎯 Selected ${finalPicks.length} diverse picks: ${finalPicks.map(p => p.name).join(', ')}`);
+  
+  // Export thumbnails and track usage
+  const picksWithThumbnails = await Promise.all(finalPicks.map(async (pick, index) => {
+    const bytes = await pick.node.exportAsync({ format: 'PNG', constraint: { type: 'WIDTH', value: 100 } });
+    const base64 = uint8ToBase64(bytes);
+    // Track usage
+    incrementImageUsage(pick.name);
+    return {
+      name: pick.name,
+      thumbnail: `data:image/png;base64,${base64}`,
+      chunkNumber: Math.floor(index / 2) + 1
+    };
+  }));
+  
+  return picksWithThumbnails;
 }
 
 // Call OpenAI API to select main image only
@@ -1097,20 +974,16 @@ async function createTemplate(selection: TemplateSelection, components: Componen
         gridFrame.appendChild(clonedGrid);
         frame.appendChild(gridFrame);
         
-      } else {
-        debugNodeStructure(backgroundInstance, 0);
-        
-        // Method 2: Try original component
-        const originalGridLayer = findGridLayer(background.node);
-        if (originalGridLayer) {
-
-          const clonedOriginalGrid = originalGridLayer.clone();
-          frame.appendChild(clonedOriginalGrid);
-
         } else {
-
+          debugNodeStructure(backgroundInstance, 0);
+          
+          // Method 2: Try original component
+          const originalGridLayer = findGridLayer(background.node);
+          if (originalGridLayer) {
+            const clonedOriginalGrid = originalGridLayer.clone();
+            frame.appendChild(clonedOriginalGrid);
+          }
         }
-      }
 
     } catch (error) {
       console.error('Grid layer error:', error instanceof Error ? error.message : 'Unknown error');
@@ -1147,14 +1020,39 @@ figma.ui.onmessage = async (msg: any) => {
       }
       // Get main images
       const mainImages = components.filter(c => c.type === 'main');
+      if (mainImages.length === 0) {
+        figma.ui.postMessage({
+          type: 'error',
+          message: 'No main images found in the document. Please add some main image components first.'
+        });
+        return;
+      }
       // Get top pick from every single chunk
       const topPicks = await getTopPickFromEveryChunk(apiKey, mainImages, blogTitle, keywords, 25);
-      // Send top picks to UI for user selection
+      if (topPicks.length === 0) {
+        figma.ui.postMessage({
+          type: 'error',
+          message: 'No suitable images found. Please try different keywords or check your components.'
+        });
+        return;
+      }
+      // Auto-select the first pick and generate template directly
+      const selectedMainImage = topPicks[0].name;
+      console.log('🎯 Auto-selecting first pick:', selectedMainImage);
+      
+      // Select components using AI, but override main image
+      const selection = await selectComponentsWithAI(apiKey, blogTitle, keywords, components);
+      selection.mainImage = selectedMainImage;
+      
+      // Create the template and export as PNG
+      const pngBytes = await createTemplate(selection, components);
       figma.ui.postMessage({
-        type: 'main-image-picks',
-        picks: topPicks,
+        type: 'exported-image',
+        bytes: Array.from(pngBytes),
         blogTitle,
-        keywords
+        background: selection.background,
+        mainImage: selection.mainImage,
+        supportingImages: selection.supportingImages
       });
     } catch (error) {
       console.error('Template generation error:', error);
@@ -1179,8 +1077,7 @@ figma.ui.onmessage = async (msg: any) => {
       // Select components using AI, but override main image
       const selection = await selectComponentsWithAI(apiKey, blogTitle, keywords, components);
       selection.mainImage = selectedMainImage;
-      // --- REMOVED: RANDOMIZE main-illustration color AND base variant if multiple exist ---
-      // --- END RANDOMIZE ---
+      
       // Create the template and export as PNG
       const pngBytes = await createTemplate(selection, components);
       figma.ui.postMessage({

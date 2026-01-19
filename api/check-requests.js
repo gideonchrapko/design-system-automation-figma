@@ -72,7 +72,7 @@ module.exports = (req, res) => {
       });
     }
     
-    // Check if lock has been held too long (5 minutes)
+    // Check if lock has been held too long (5 minutes) - auto-clear stale locks
     if (lockStartTime && (now - lockStartTime) > 5 * 60 * 1000) {
       console.log('⏰ Lock timeout - clearing old lock');
       isProcessing = false;
@@ -80,30 +80,10 @@ module.exports = (req, res) => {
       lockStartTime = null;
     }
     
-    // Check if system is already in use
-    if (isProcessing && currentUser && currentUser !== newRequest.userId) {
-      console.log('🚫 System busy - rejecting request from:', newRequest.userId);
-      return res.status(423).json({ 
-        success: false, 
-        error: 'System is currently in use by another user. Please wait a moment and try again.',
-        busy: true,
-        currentUser: currentUser
-      });
-    }
-    
-    // If this is a new request (not a button click), set the lock
-    if (!newRequest.selectedGraphicIndex) {
-      if (isProcessing) {
-        console.log('🚫 System busy - rejecting new request from:', newRequest.userId);
-        return res.status(423).json({ 
-          success: false, 
-          error: 'System is currently in use by another user. Please wait a moment and try again.',
-          busy: true,
-          currentUser: currentUser
-        });
-      }
-      
-      // Set the lock
+    // Simplified: Allow all requests to queue - no blocking
+    // Just track the current user for informational purposes
+    if (!newRequest.selectedGraphicIndex && !isProcessing) {
+      // Set the lock only if not already processing (for tracking)
       isProcessing = true;
       currentUser = newRequest.userId;
       lockStartTime = now;
@@ -121,7 +101,7 @@ module.exports = (req, res) => {
     console.log('🔒 System status - Processing:', isProcessing, 'Current user:', currentUser);
     console.log('💓 Plugin status - Available:', pluginAvailable, 'Last heartbeat:', pluginLastHeartbeat ? new Date(pluginLastHeartbeat).toISOString() : 'Never');
     
-    // Check for status update parameter
+    // Check for status update parameter`
     if (req.query.updateStatus === 'true' && req.query.requestId && req.query.status) {
       const requestId = req.query.requestId;
       const newStatus = req.query.status;

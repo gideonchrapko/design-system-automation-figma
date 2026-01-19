@@ -179,6 +179,15 @@
         border: 1px solid #f5c6cb;
       }
 
+      .generate-another {
+        margin-top: 16px;
+        background: #6c757d;
+      }
+
+      .generate-another:hover {
+        background: #5a6268;
+      }
+
     </style>
   </head>
   <body>
@@ -213,6 +222,7 @@
         <div id="templateDetails"></div>
         <div class="component-list" id="componentList"></div>
         <a href="#" class="download-link" id="downloadLink" style="display:none;">Download Template (WebP)</a>
+        <button id="generateAnother" class="generate-another" style="display:none;">Generate Another Template</button>
       </div>
       
       <div class="error" id="error" style="display: none;"></div>
@@ -266,6 +276,28 @@
         document.getElementById('loading').style.display = 'none';
         document.getElementById('generate').disabled = false;
       }
+
+      function resetForm() {
+        // Clear form fields (but keep API key)
+        document.getElementById('blogTitle').value = '';
+        document.getElementById('keywords').value = '';
+        
+        // Hide result and error
+        document.getElementById('result').style.display = 'none';
+        document.getElementById('error').style.display = 'none';
+        document.getElementById('generateAnother').style.display = 'none';
+        document.getElementById('downloadLink').style.display = 'none';
+        
+        // Clear result content
+        document.getElementById('templateDetails').innerHTML = '';
+        document.getElementById('componentList').innerHTML = '';
+        
+        // Re-enable generate button
+        document.getElementById('generate').disabled = false;
+        
+        // Focus on blog title input
+        document.getElementById('blogTitle').focus();
+      }
       
       function showResult(details) {
         const resultDiv = document.getElementById('result');
@@ -292,6 +324,9 @@
         downloadLink.style.display = 'none';
         resultDiv.style.display = 'block';
         hideLoading();
+        
+        // Show "Generate Another" button
+        document.getElementById('generateAnother').style.display = 'block';
       }
       
       // Listen for exported image from plugin code
@@ -359,6 +394,11 @@
         };
         tempImg.src = url;
       }
+
+      // Add event listener for "Generate Another" button
+      document.getElementById('generateAnother').onclick = () => {
+        resetForm();
+      };
     </script>
   </body>
 </html>
